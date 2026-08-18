@@ -1,0 +1,395 @@
+<Window x:Class="AlprWpfApp.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:viewmodels="clr-namespace:AlprWpfApp.ViewModels"
+        xmlns:models="clr-namespace:AlprWpfApp.Models"
+        mc:Ignorable="d"
+        Title="ALPR PRO - Hệ Thống Nhận Diện Biển Số Xe Tốc Độ Cao (Offline &lt; 150ms)" 
+        Height="900" Width="1440" MinHeight="750" MinWidth="1150"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource BackgroundDeepBrush}">
+
+    <Window.DataContext>
+        <viewmodels:MainViewModel />
+    </Window.DataContext>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- Top Header Bar -->
+            <RowDefinition Height="64" />
+            <!-- Main Content Area -->
+            <RowDefinition Height="*" />
+            <!-- Bottom Status Bar -->
+            <RowDefinition Height="32" />
+        </Grid.RowDefinitions>
+
+        <!-- ================= TOP HEADER BAR ================= -->
+        <Border Grid.Row="0" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,0,0,1" Padding="20,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Logo & App Title -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource PrimaryAccentBrush}" Margin="0,0,12,0">
+                        <TextBlock Text="⚡" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#0F172A" />
+                    </Border>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="ALPR PRO NATIVE DESKTOP" FontWeight="Bold" FontSize="16" Foreground="{StaticResource TextPrimaryBrush}" />
+                        <TextBlock Text=".NET 8.0 • YOLOv8 + PARSeq ONNX (&lt; 80ms CPU Offline)" FontSize="11" Foreground="{StaticResource PrimaryAccentBrush}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Center Badges -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <!-- Camera Status Badge -->
+                    <Border Background="#0F172A" CornerRadius="16" Padding="12,6" Margin="0,0,10,0" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Margin="0,0,8,0" 
+                                     Fill="{Binding IsStreaming, Converter={StaticResource StreamingStatusToColorConverter}}" />
+                            <TextBlock Text="{Binding CameraStatus}" FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- FPS Badge -->
+                    <Border Background="#0F172A" CornerRadius="16" Padding="12,6" Margin="0,0,10,0" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="FPS: " FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" />
+                            <TextBlock Text="{Binding Fps}" FontWeight="Bold" FontSize="12" Foreground="{StaticResource PrimaryAccentBrush}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Target Latency Badge -->
+                    <Border Background="#064E3B" CornerRadius="16" Padding="12,6" BorderBrush="#059669" BorderThickness="1">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚡ Toàn trình: " FontSize="12" Foreground="#A7F3D0" />
+                            <TextBlock Text="&lt; 150ms" FontWeight="Bold" FontSize="12" Foreground="#34D399" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- Right Header Controls -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox IsChecked="{Binding IsAutoInference}" VerticalAlignment="Center" Margin="0,0,10,0">
+                        <TextBlock Text="Tự động nhận diện (Continuous AI)" FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" Margin="4,0,0,0" />
+                    </CheckBox>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ================= MAIN CONTENT AREA (2 Columns) ================= -->
+        <Grid Grid.Row="1" Margin="16">
+            <Grid.ColumnDefinitions>
+                <!-- Left: Video Stream & Source Config (60%) -->
+                <ColumnDefinition Width="6*" />
+                <ColumnDefinition Width="16" />
+                <!-- Right: Results Hero & History DataGrid (40%) -->
+                <ColumnDefinition Width="4*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ================= LEFT COLUMN: STREAM & CONFIG ================= -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <!-- Camera Stream Viewport -->
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="12" />
+                    <!-- Source Selection & Action Bar -->
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <!-- Camera Stream Card -->
+                <Border Grid.Row="0" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" ClipToBounds="True">
+                    <Grid>
+                        <!-- Live Image Display -->
+                        <Image Source="{Binding LiveVideoFrame}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+                        <!-- Placeholder when no image is loaded -->
+                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                                    Visibility="{Binding LiveVideoFrame, Converter={StaticResource NullToVisibilityConverter}, ConverterParameter=invert}">
+                            <Border Width="64" Height="64" CornerRadius="32" Background="#0F172A" HorizontalAlignment="Center" Margin="0,0,0,12">
+                                <TextBlock Text="📹" FontSize="28" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Text="Chưa kết nối Camera hoặc chưa chọn ảnh kiểm thử" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextSecondaryBrush}" HorizontalAlignment="Center" />
+                            <TextBlock Text="Chọn nguồn phát bên dưới và nhấn 'Bắt Đầu Stream' hoặc 'Chọn Ảnh'" FontSize="12" Foreground="{StaticResource TextMutedBrush}" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <!-- Live Feed Indicator Tag -->
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                                Background="#B91C1C" CornerRadius="4" Padding="8,4"
+                                Visibility="{Binding IsStreaming, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="6" Height="6" Fill="#FFFFFF" Margin="0,0,6,0" />
+                                <TextBlock Text="LIVE" FontWeight="Bold" FontSize="11" Foreground="#FFFFFF" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Source Configuration & Controls Panel -->
+                <Border Grid.Row="2" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16">
+                    <StackPanel>
+                        <!-- Source Selection Tabs / Radio Buttons -->
+                        <TextBlock Text="NGUỒN ĐẦU VÀO CAMERA &amp; TẬP TIN" FontSize="12" FontWeight="Bold" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,10" />
+
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Webcam Radio -->
+                            <RadioButton Grid.Column="0" Content="📷 Webcam" GroupName="SourceType"
+                                         IsChecked="{Binding IsSourceWebcam, Mode=TwoWay}"
+                                         Foreground="{StaticResource TextPrimaryBrush}" FontSize="12" />
+
+                            <!-- RTSP Radio -->
+                            <RadioButton Grid.Column="1" Content="🌐 RTSP IP Cam" GroupName="SourceType"
+                                         IsChecked="{Binding IsSourceRtsp, Mode=TwoWay}"
+                                         Foreground="{StaticResource TextPrimaryBrush}" FontSize="12" />
+
+                            <!-- Video File Radio -->
+                            <RadioButton Grid.Column="2" Content="🎬 File Video" GroupName="SourceType"
+                                         IsChecked="{Binding IsSourceVideo, Mode=TwoWay}"
+                                         Foreground="{StaticResource TextPrimaryBrush}" FontSize="12" />
+
+                            <!-- Static Image Radio -->
+                            <RadioButton Grid.Column="3" Content="🖼 File Ảnh Tĩnh" GroupName="SourceType"
+                                         IsChecked="{Binding IsSourceImage, Mode=TwoWay}"
+                                         Foreground="{StaticResource TextPrimaryBrush}" FontSize="12" />
+                        </Grid>
+
+                        <!-- Input Parameter Boxes -->
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBox Grid.Column="0" Text="{Binding RtspUrl, UpdateSourceTrigger=PropertyChanged}" 
+                                     Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,8,0"
+                                     ToolTip="Nhập đường dẫn RTSP hoặc chọn file video/ảnh bên cạnh" />
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="Chọn Video" Command="{Binding BrowseVideoFileCommand}" 
+                                        Style="{StaticResource ModernButtonStyle}" Background="#334155" Margin="0,0,6,0" Padding="12,8" />
+                                <Button Content="Chọn Ảnh Test" Command="{Binding SelectTestImageCommand}" 
+                                        Style="{StaticResource CyanButtonStyle}" Padding="12,8" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Primary Action Buttons Bar -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="1.5*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Button Grid.Column="0" Content="▶ Bắt Đầu Stream" Command="{Binding StartCameraCommand}" 
+                                    Style="{StaticResource SuccessButtonStyle}" IsEnabled="{Binding IsStreaming, Converter={StaticResource InvertedBoolToVisibilityConverter}}" />
+
+                            <Button Grid.Column="2" Content="⏹ Dừng Stream" Command="{Binding StopCameraCommand}" 
+                                    Style="{StaticResource DangerButtonStyle}" IsEnabled="{Binding IsStreaming}" />
+
+                            <Button Grid.Column="4" Content="📷 Chụp &amp; Nhận Diện (Snap)" Command="{Binding SnapCommand}" 
+                                    Style="{StaticResource CyanButtonStyle}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- ================= RIGHT COLUMN: HERO & HISTORY ================= -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <!-- Hero Recognition Card -->
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="12" />
+                    <!-- History DataGrid -->
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Recognition Hero Card -->
+                <Border Grid.Row="0" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="18">
+                    <StackPanel>
+                        <!-- Header -->
+                        <Grid Margin="0,0,0,12">
+                            <TextBlock Text="KẾT QUẢ NHẬN DIỆN MỚI NHẤT" FontWeight="Bold" FontSize="13" Foreground="{StaticResource PrimaryAccentBrush}" />
+                            <Border HorizontalAlignment="Right" Background="#064E3B" CornerRadius="4" Padding="6,2"
+                                    Visibility="{Binding IsPlateValid, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock Text="✓ HỢP LỆ" FontWeight="Bold" FontSize="10" Foreground="#34D399" />
+                            </Border>
+                        </Grid>
+
+                        <!-- REALISTIC VIETNAMESE LICENSE PLATE BADGE -->
+                        <Border Margin="0,4,0,14" CornerRadius="10" 
+                                BorderThickness="3"
+                                BorderBrush="{Binding LastPlateColor, Converter={StaticResource PlateColorToBorderConverter}}"
+                                Background="{Binding LastPlateColor, Converter={StaticResource PlateColorToBackgroundConverter}}"
+                                Padding="16,10"
+                                HorizontalAlignment="Stretch">
+                            <Grid>
+                                <!-- Simulated Plate Screws/Rivets -->
+                                <Ellipse Width="6" Height="6" Fill="#4B5563" HorizontalAlignment="Left" VerticalAlignment="Top" />
+                                <Ellipse Width="6" Height="6" Fill="#4B5563" HorizontalAlignment="Right" VerticalAlignment="Top" />
+                                <Ellipse Width="6" Height="6" Fill="#4B5563" HorizontalAlignment="Left" VerticalAlignment="Bottom" />
+                                <Ellipse Width="6" Height="6" Fill="#4B5563" HorizontalAlignment="Right" VerticalAlignment="Bottom" />
+
+                                <!-- Plate Number Text -->
+                                <TextBlock Text="{Binding LastPlateNumber}" 
+                                           FontFamily="Segoe UI Black, Arial Black, Consolas, Impact" 
+                                           FontSize="32" 
+                                           FontWeight="Black"
+                                           HorizontalAlignment="Center" 
+                                           VerticalAlignment="Center"
+                                           Foreground="{Binding LastPlateColor, Converter={StaticResource PlateColorToForegroundConverter}}" 
+                                           Margin="0,2,0,2" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Details Grid -->
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Vehicle Type Card -->
+                            <Border Grid.Column="0" Background="#0F172A" CornerRadius="8" Padding="10,8" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="Loại phương tiện" FontSize="11" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding LastVehicleType}" FontWeight="Bold" FontSize="14" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Plate Color Card -->
+                            <Border Grid.Column="2" Background="#0F172A" CornerRadius="8" Padding="10,8" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
+                                <StackPanel>
+                                    <TextBlock Text="Màu biển số" FontSize="11" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding LastPlateColor}" FontWeight="Bold" FontSize="14" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+
+                        <!-- Latency Metrics Breakdown -->
+                        <Border Background="#0F172A" CornerRadius="8" Padding="12,10" Margin="0,0,0,12" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- YOLO Latency -->
+                                <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                    <TextBlock Text="YOLOv8 Detect" FontSize="10" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding YoloLatencyMs, StringFormat='{}{0} ms'}" FontWeight="SemiBold" FontSize="13" Foreground="{StaticResource PrimaryAccentBrush}" HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- PARSeq Latency -->
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Center">
+                                    <TextBlock Text="PARSeq OCR" FontSize="10" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding ParseqLatencyMs, StringFormat='{}{0} ms'}" FontWeight="SemiBold" FontSize="13" Foreground="{StaticResource SecondaryAccentBrush}" HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- Total Latency -->
+                                <StackPanel Grid.Column="2" HorizontalAlignment="Center">
+                                    <TextBlock Text="Tổng Độ Trễ" FontSize="10" Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding TotalLatencyMs, StringFormat='{}{0} ms'}" FontWeight="Bold" FontSize="14" Foreground="#34D399" HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Plate Crop Thumbnail Preview -->
+                        <Grid Height="60" Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Width="140" Height="56" Background="#0F172A" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="6" Margin="0,0,12,0" ClipToBounds="True">
+                                <Image Source="{Binding LastCropThumbnail}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Độ tin cậy: " FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" />
+                                <TextBlock Text="{Binding LastConfidence}" FontWeight="Bold" FontSize="15" Foreground="{StaticResource SuccessBrush}" />
+                                <TextBlock Text="{Binding LastEngine}" FontSize="10" Foreground="{StaticResource TextMutedBrush}" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- History Table Card -->
+                <Border Grid.Row="2" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="10" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <!-- History Header & Actions -->
+                        <Grid Grid.Row="0">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="LỊCH SỬ XE VỪA QUÉT" FontWeight="Bold" FontSize="13" Foreground="{StaticResource TextPrimaryBrush}" />
+                                <Border Background="#334155" CornerRadius="10" Padding="8,2" Margin="8,0,0,0">
+                                    <TextBlock Text="{Binding History.Count}" FontSize="11" FontWeight="Bold" Foreground="{StaticResource PrimaryAccentBrush}" />
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button Content="📥 Xuất CSV" Command="{Binding ExportCsvCommand}" 
+                                        Style="{StaticResource ModernButtonStyle}" Background="#334155" Padding="10,6" FontSize="11" Margin="0,0,6,0" />
+                                <Button Content="🗑 Xóa" Command="{Binding ClearHistoryCommand}" 
+                                        Style="{StaticResource DangerButtonStyle}" Padding="10,6" FontSize="11" />
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- DataGrid History List -->
+                        <DataGrid Grid.Row="2" ItemsSource="{Binding History}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Thời gian" Binding="{Binding FormattedTime}" Width="85" />
+                                <DataGridTemplateColumn Header="Biển số" Width="105">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="4" Padding="6,2" 
+                                                    Background="{Binding PlateColor, Converter={StaticResource PlateColorToBackgroundConverter}}"
+                                                    BorderBrush="{Binding PlateColor, Converter={StaticResource PlateColorToBorderConverter}}"
+                                                    BorderThickness="1"
+                                                    HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding PlateNumber}" FontWeight="Bold" FontSize="12"
+                                                           Foreground="{Binding PlateColor, Converter={StaticResource PlateColorToForegroundConverter}}" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Loại xe" Binding="{Binding VehicleType}" Width="75" />
+                                <DataGridTextColumn Header="Màu" Binding="{Binding PlateColor}" Width="60" />
+                                <DataGridTextColumn Header="Độ trễ" Binding="{Binding ProcessingMs, StringFormat='{}{0} ms'}" Width="70" />
+                                <DataGridTextColumn Header="Độ tin cậy" Binding="{Binding Confidence, StringFormat='{}{0}%'}" Width="80" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- ================= BOTTOM STATUS BAR ================= -->
+        <Border Grid.Row="2" Background="#0A0F1D" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="0,1,0,0" Padding="16,0">
+            <Grid VerticalAlignment="Center">
+                <TextBlock Text="ALPR Engine: Microsoft.ML.OnnxRuntime 1.18+ • OpenCV 4.10 • Ultra-Low Latency Pipeline" FontSize="11" Foreground="{StaticResource TextMutedBrush}" />
+                <TextBlock Text="Offline 100% On-Premise" FontSize="11" Foreground="{StaticResource SuccessBrush}" HorizontalAlignment="Right" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

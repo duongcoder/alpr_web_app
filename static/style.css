@@ -1,0 +1,73 @@
+/* Custom CSS Styles for ALPR Việt Nam App */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@700&display=swap');
+
+:root {
+  --vn-plate-font: 'Space Grotesk', monospace, sans-serif;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Glassmorphism effects */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(229, 231, 235, 0.8);
+}
+
+.dark .glass-panel {
+  background: rgba(17, 24, 39, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(55, 65, 81, 0.6);
+}
+
+/* Authentic Vietnamese License Plate Styling */
+.vn-plate-white {
+  background: linear-gradient(180deg, #ffffff 0%, #f3f4f6 100%);
+  color: #111827;
+  border: 3px solid #1f2937;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  font-family: var(--vn-plate-font);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.vn-plate-yellow {
+  background: linear-gradient(180deg, #facc15 0%, #eab308 100%);
+  color: #111827;
+  border: 3px solid #111827;
+  box-shadow: 0 4px 14px rgba(234, 179, 8, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  font-family: var(--vn-plate-font);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Dropzone Hover Pulse */
+.dropzone-active {
+  border-color: #3b82f6 !important;
+  background-color: rgba(59, 130, 246, 0.05) !important;
+  transform: scale(1.01);
+}
+
+/* Keyframe animations */
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 0.4; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2s infinite ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
