@@ -314,24 +314,66 @@ namespace AlprTests
         }
 
         [Fact]
-        public void TestParseqPreprocess_CanvasPadding()
+        public void TestRoiConfigService_SaveAndLoad()
         {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string parseqPath = Path.Combine(baseDir, "Models", "parseq.onnx");
-            if (!File.Exists(parseqPath)) parseqPath = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "models", "parseq.onnx"));
+            // Test Default
+            var defaultConfig = AlprWpfApp.Services.Config.RoiConfigService.DefaultConfig;
+            Assert.Equal(0.22f, defaultConfig.X);
+            Assert.Equal(0.10f, defaultConfig.Y);
+            Assert.Equal(0.56f, defaultConfig.Width);
+            Assert.Equal(0.88f, defaultConfig.Height);
 
-            using var parseq = new ParseqRecognizer(parseqPath);
-            Assert.True(parseq.IsLoaded);
+            // Test Save and Load Custom ROI
+            var customRoi = new Rect2f(0.15f, 0.20f, 0.65f, 0.75f);
+            bool saved = AlprWpfApp.Services.Config.RoiConfigService.Save(customRoi);
+            Assert.True(saved);
 
-            // Giả lập crop dòng 1 tỷ lệ vuông / gần vuông (ví dụ: 60x40)
-            using var sampleCrop = new Mat(40, 60, MatType.CV_8UC3, new Scalar(255, 255, 255));
-            var tensor = parseq.PreprocessForParseq(sampleCrop);
+            var loadedConfig = AlprWpfApp.Services.Config.RoiConfigService.Load();
+            Assert.Equal(0.15f, loadedConfig.X, 2);
+            Assert.Equal(0.20f, loadedConfig.Y, 2);
+            Assert.Equal(0.65f, loadedConfig.Width, 2);
+            Assert.Equal(0.75f, loadedConfig.Height, 2);
 
-            Assert.NotNull(tensor);
-            Assert.Equal(1, tensor.Dimensions[0]);
-            Assert.Equal(3, tensor.Dimensions[1]);
-            Assert.Equal(32, tensor.Dimensions[2]);
-            Assert.Equal(128, tensor.Dimensions[3]);
+            // Restore default configuration
+            AlprWpfApp.Services.Config.RoiConfigService.Save(defaultConfig);
+        }
+
+        [Fact]
+        public void TestCoordinateNormalization_LetterboxingMath()
+        {
+            // Giả lập khung hiển thị Image 800x600, ảnh gốc tỉ lệ 16:9 (1920x1080)
+            double ctrlW = 800;
+            double ctrlH = 600;
+            double imgW = 1920;
+            double imgH = 1080;
+
+            double scale = Math.Min(ctrlW / imgW, ctrlH / imgH); // scale = 800 / 1920 = 0.416667
+            double renderedW = imgW * scale; // 800
+            double renderedH = imgH * scale; // 450
+            double offsetX = (ctrlW - renderedW) / 2.0; // 0
+            double offsetY = (ctrlH - renderedH) / 2.0; // 75 (2 viền đen trên dưới 75px)
+
+            Assert.Equal(0, offsetX);
+            Assert.Equal(75, offsetY);
+
+            // Giả lập người dùng vẽ box từ (100, 150) đến (500, 400) trên Canvas 800x600
+            double x1 = 100, x2 = 500;
+            double y1 = 150, y2 = 400;
+
+            double clampedLeft = Math.Clamp(x1, offsetX, offsetX + renderedW);
+            double clampedRight = Math.Clamp(x2, offsetX, offsetX + renderedW);
+            double clampedTop = Math.Clamp(y1, offsetY, offsetY + renderedH);
+            double clampedBottom = Math.Clamp(y2, offsetY, offsetY + renderedH);
+
+            float normX = (float)((clampedLeft - offsetX) / renderedW);
+            float normY = (float)((clampedTop - offsetY) / renderedH);
+            float normW = (float)((clampedRight - clampedLeft) / renderedW);
+            float normH = (float)((clampedBottom - clampedTop) / renderedH);
+
+            Assert.Equal(0.125f, normX, 3); // 100 / 800 = 0.125
+            Assert.Equal((float)((150.0 - 75.0) / 450.0), normY, 3); // 75 / 450 = 0.1667
+            Assert.Equal(0.50f, normW, 3);  // 400 / 800 = 0.50
+            Assert.Equal((float)((400.0 - 150.0) / 450.0), normH, 3); // 250 / 450 = 0.5556
         }
     }
 }

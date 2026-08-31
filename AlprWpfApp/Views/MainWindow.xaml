@@ -76,10 +76,19 @@
                 <!-- Right Header Controls -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <CheckBox IsChecked="{Binding ShowRoiOverlay}" VerticalAlignment="Center" Margin="0,0,10,0">
-                        <TextBlock Text="🎯 Vùng Bàn Cân (ROI)" FontSize="12" Foreground="{StaticResource PrimaryAccentBrush}" Margin="4,0,0,0" />
+                        <TextBlock Text="🎯 Vùng Cân (ROI)" FontSize="12" Foreground="{StaticResource PrimaryAccentBrush}" Margin="4,0,0,0" />
                     </CheckBox>
-                    <Button Content="⚙ Chỉnh ROI" Command="{Binding ToggleRoiPanelCommand}" 
-                            Style="{StaticResource ModernButtonStyle}" Background="#334155" Padding="8,4" FontSize="11" Margin="0,0,12,0" />
+                    <Button Content="🖊 Vẽ ROI Chuột" Command="{Binding ToggleDrawRoiModeCommand}" 
+                            Style="{StaticResource CyanButtonStyle}" Padding="10,6" FontSize="11" Margin="0,0,6,0"
+                            ToolTip="Bật/tắt chế độ kéo chuột vẽ vùng nhận diện bàn cân trực tiếp trên khung hình" />
+                    <Button Content="💾 Lưu ROI" Command="{Binding SaveRoiCommand}" 
+                            Style="{StaticResource SuccessButtonStyle}" Padding="10,6" FontSize="11" Margin="0,0,6,0"
+                            ToolTip="Lưu cấu hình vùng cân vào file roi_config.json" />
+                    <Button Content="🔄 Mặc Định" Command="{Binding ResetRoiToDefaultCommand}" 
+                            Style="{StaticResource ModernButtonStyle}" Background="#334155" Padding="10,6" FontSize="11" Margin="0,0,6,0"
+                            ToolTip="Khôi phục vùng nhận diện về mặc định (22%, 10%, 56%, 88%)" />
+                    <Button Content="⚙ Slider ROI" Command="{Binding ToggleRoiPanelCommand}" 
+                            Style="{StaticResource ModernButtonStyle}" Background="#1E293B" BorderThickness="1" BorderBrush="{StaticResource CardBorderBrush}" Padding="8,6" FontSize="11" Margin="0,0,12,0" />
                     <CheckBox IsChecked="{Binding IsAutoInference}" VerticalAlignment="Center" Margin="0,0,10,0">
                         <TextBlock Text="Tự động nhận diện (Continuous AI)" FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" Margin="4,0,0,0" />
                     </CheckBox>
@@ -109,9 +118,9 @@
 
                 <!-- Camera Stream Card -->
                 <Border Grid.Row="0" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="12" ClipToBounds="True">
-                    <Grid>
+                    <Grid x:Name="CameraViewportGrid">
                         <!-- Live Image Display -->
-                        <Image Source="{Binding LiveVideoFrame}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Image x:Name="CameraDisplayImage" Source="{Binding LiveVideoFrame}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" />
 
                         <!-- Placeholder when no image is loaded -->
                         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
@@ -133,15 +142,55 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Interactive ROI Drawing Canvas (Phủ đè lên Image) -->
+                        <Canvas x:Name="RoiDrawingCanvas"
+                                Background="Transparent"
+                                Cursor="Cross"
+                                Visibility="{Binding IsDrawingRoiMode, Converter={StaticResource BoolToVisibilityConverter}}"
+                                MouseDown="RoiDrawingCanvas_MouseDown"
+                                MouseMove="RoiDrawingCanvas_MouseMove"
+                                MouseUp="RoiDrawingCanvas_MouseUp"
+                                MouseLeave="RoiDrawingCanvas_MouseLeave">
+                            <Rectangle x:Name="RoiSelectionRect"
+                                       Stroke="#00E5FF"
+                                       StrokeThickness="2"
+                                       StrokeDashArray="4 2"
+                                       Fill="#2600E5FF"
+                                       Visibility="Collapsed" />
+                        </Canvas>
+
+                        <!-- Drawing Mode Instruction Banner -->
+                        <Border HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,14,0,0"
+                                Background="#EE0F172A" BorderBrush="#00E5FF" BorderThickness="1.5" CornerRadius="20" Padding="16,8"
+                                Visibility="{Binding IsDrawingRoiMode, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="🖊 CHẾ ĐỘ VẼ ROI:" FontWeight="Bold" FontSize="12" Foreground="#00E5FF" Margin="0,0,8,0" />
+                                <TextBlock Text="Kéo thả chuột trên khung hình để tạo vùng cân mới • Nhấp nút để hoàn tất" FontSize="12" Foreground="{StaticResource TextPrimaryBrush}" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Floating ROI Tuner Panel on Camera Viewport -->
                         <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="12"
-                                Background="#E60F172A" BorderBrush="{StaticResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Width="260"
+                                Background="#E60F172A" BorderBrush="{StaticResource PrimaryAccentBrush}" BorderThickness="1" CornerRadius="10" Padding="14,12" Width="280"
                                 Visibility="{Binding IsRoiPanelExpanded, Converter={StaticResource BoolToVisibilityConverter}}">
                             <StackPanel>
-                                <Grid Margin="0,0,0,8">
+                                <Grid Margin="0,0,0,10">
                                     <TextBlock Text="🎯 TINH CHỈNH VÙNG CÂN (ROI)" FontSize="11" FontWeight="Bold" Foreground="{StaticResource PrimaryAccentBrush}" />
                                     <Button Content="✕" Command="{Binding ToggleRoiPanelCommand}" HorizontalAlignment="Right"
                                             Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextMutedBrush}" Cursor="Hand" FontWeight="Bold" />
+                                </Grid>
+
+                                <!-- Quick Action Buttons Inside Panel -->
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="6" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0" Content="🖊 Vẽ Chuột" Command="{Binding ToggleDrawRoiModeCommand}" 
+                                            Style="{StaticResource CyanButtonStyle}" FontSize="11" Padding="6,5" />
+                                    <Button Grid.Column="2" Content="💾 Lưu ROI" Command="{Binding SaveRoiCommand}" 
+                                            Style="{StaticResource SuccessButtonStyle}" FontSize="11" Padding="6,5" />
                                 </Grid>
                                 
                                 <!-- Slider RoiX -->
@@ -176,7 +225,7 @@
                                         <ColumnDefinition Width="36" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Độ Rộng:" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                                    <Slider Grid.Column="1" Minimum="10" Maximum="100" Value="{Binding RoiWidth, Mode=TwoWay}" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Minimum="5" Maximum="100" Value="{Binding RoiWidth, Mode=TwoWay}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="2" Text="{Binding RoiWidth, StringFormat='{}{0}%'}" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                 </Grid>
 
@@ -188,12 +237,12 @@
                                         <ColumnDefinition Width="36" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="0" Text="Độ Cao:" FontSize="11" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" />
-                                    <Slider Grid.Column="1" Minimum="10" Maximum="100" Value="{Binding RoiHeight, Mode=TwoWay}" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Minimum="5" Maximum="100" Value="{Binding RoiHeight, Mode=TwoWay}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="2" Text="{Binding RoiHeight, StringFormat='{}{0}%'}" FontSize="11" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                 </Grid>
 
-                                <Button Content="↺ Mặc Định (24%, 20%, 52%, 78%)" Command="{Binding ResetRoiToDefaultCommand}" 
-                                        Style="{StaticResource ModernButtonStyle}" Background="#1E293B" FontSize="10" Padding="6,4" HorizontalAlignment="Stretch" Margin="0,4,0,0" />
+                                <Button Content="🔄 Mặc Định (22%, 10%, 56%, 88%)" Command="{Binding ResetRoiToDefaultCommand}" 
+                                        Style="{StaticResource ModernButtonStyle}" Background="#1E293B" FontSize="10" Padding="6,5" HorizontalAlignment="Stretch" Margin="0,4,0,0" />
                             </StackPanel>
                         </Border>
                     </Grid>

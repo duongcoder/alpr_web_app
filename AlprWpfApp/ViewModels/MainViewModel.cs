@@ -14,6 +14,7 @@ using OpenCvSharp;
 using AlprWpfApp.Models;
 using AlprWpfApp.Services.AI;
 using AlprWpfApp.Services.Camera;
+using AlprWpfApp.Services.Config;
 
 namespace AlprWpfApp.ViewModels
 {
@@ -86,6 +87,9 @@ namespace AlprWpfApp.ViewModels
         [ObservableProperty]
         private bool _showRoiOverlay = true;
 
+        [ObservableProperty]
+        private bool _isDrawingRoiMode = false;
+
         // Cấu hình Vùng nhận diện bàn cân (Scale ROI Tinh Chỉnh)
         [ObservableProperty]
         private int _roiX = 22;
@@ -148,13 +152,23 @@ namespace AlprWpfApp.ViewModels
 
         public MainViewModel()
         {
+            // Nạp cấu hình ROI từ file json trước
+            var roiConfig = RoiConfigService.Load();
+            _roiX = (int)Math.Round(roiConfig.X * 100);
+            _roiY = (int)Math.Round(roiConfig.Y * 100);
+            _roiWidth = (int)Math.Round(roiConfig.Width * 100);
+            _roiHeight = (int)Math.Round(roiConfig.Height * 100);
+
             // Tìm kiếm đường dẫn mô hình
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             string yoloPath = Path.Combine(baseDir, "Models", "yolov8_plate.onnx");
             string parseqPath = Path.Combine(baseDir, "Models", "parseq.onnx");
 
             // Khởi tạo các services
-            _alprEngine = new AlprPipelineEngine(yoloPath, parseqPath);
+            _alprEngine = new AlprPipelineEngine(yoloPath, parseqPath)
+            {
+                ScaleRoi = new Rect2f(roiConfig.X, roiConfig.Y, roiConfig.Width, roiConfig.Height)
+            };
             _alprWorker = new AlprWorker(_alprEngine)
             {
                 IsAutoInference = _isAutoInference
@@ -271,24 +285,75 @@ namespace AlprWpfApp.ViewModels
             float rh = Math.Clamp(RoiHeight / 100.0f, 0.01f, 1.0f - ry);
 
             _alprEngine.ScaleRoi = new Rect2f(rx, ry, rw, rh);
+            RefreshCurrentOverlay();
+        }
 
-            lock (_frameLock)
+        /// <summary>
+        /// Cập nhật vùng ROI từ thao tác kéo thả chuột trực tiếp trên giao diện WPF
+        /// </summary>
+        public void UpdateRoiFromDrawing(float normX, float normY, float normW, float normH)
+        {
+            float rx = Math.Clamp(normX, 0.0f, 0.95f);
+            float ry = Math.Clamp(normY, 0.0f, 0.95f);
+            float rw = Math.Clamp(normW, 0.02f, 1.0f - rx);
+            float rh = Math.Clamp(normH, 0.02f, 1.0f - ry);
+
+            RoiX = (int)Math.Round(rx * 100);
+            RoiY = (int)Math.Round(ry * 100);
+            RoiWidth = (int)Math.Round(rw * 100);
+            RoiHeight = (int)Math.Round(rh * 100);
+
+            _alprEngine.ScaleRoi = new Rect2f(rx, ry, rw, rh);
+            RoiConfigService.Save(_alprEngine.ScaleRoi);
+
+            IsDrawingRoiMode = false;
+            ShowRoiOverlay = true;
+
+            RefreshCurrentOverlay();
+        }
+
+        [RelayCommand]
+        public void ToggleDrawRoiMode()
+        {
+            IsDrawingRoiMode = !IsDrawingRoiMode;
+            if (IsDrawingRoiMode)
             {
-                if (_latestRawFrame != null && !_latestRawFrame.IsDisposed && !_latestRawFrame.Empty() && !IsStreaming)
-                {
-                    using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(_latestRawFrame, _alprEngine.ScaleRoi, null, null, ShowRoiOverlay);
-                    LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(overlayMat);
-                }
+                ShowRoiOverlay = true;
+            }
+        }
+
+        [RelayCommand]
+        public void SaveRoi()
+        {
+            float rx = Math.Clamp(RoiX / 100.0f, 0.0f, 1.0f);
+            float ry = Math.Clamp(RoiY / 100.0f, 0.0f, 1.0f);
+            float rw = Math.Clamp(RoiWidth / 100.0f, 0.01f, 1.0f - rx);
+            float rh = Math.Clamp(RoiHeight / 100.0f, 0.01f, 1.0f - ry);
+            _alprEngine.ScaleRoi = new Rect2f(rx, ry, rw, rh);
+
+            bool success = RoiConfigService.Save(_alprEngine.ScaleRoi);
+            if (success)
+            {
+                MessageBox.Show($"Đã lưu vùng bàn cân ROI thành công:\nX={RoiX}%, Y={RoiY}%, Rộng={RoiWidth}%, Cao={RoiHeight}%\nvào file roi_config.json", "Cấu Hình ROI", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show("Không thể lưu file cấu hình roi_config.json!", "Lỗi", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
         [RelayCommand]
         public void ResetRoiToDefault()
         {
-            RoiX = 22;
-            RoiY = 10;
-            RoiWidth = 56;
-            RoiHeight = 88;
+            var def = RoiConfigService.DefaultConfig;
+            RoiX = (int)Math.Round(def.X * 100);
+            RoiY = (int)Math.Round(def.Y * 100);
+            RoiWidth = (int)Math.Round(def.Width * 100);
+            RoiHeight = (int)Math.Round(def.Height * 100);
+
+            _alprEngine.ScaleRoi = new Rect2f(def.X, def.Y, def.Width, def.Height);
+            RoiConfigService.Save(_alprEngine.ScaleRoi);
+            RefreshCurrentOverlay();
         }
 
         [RelayCommand]
@@ -299,11 +364,16 @@ namespace AlprWpfApp.ViewModels
 
         partial void OnShowRoiOverlayChanged(bool value)
         {
+            RefreshCurrentOverlay();
+        }
+
+        public void RefreshCurrentOverlay()
+        {
             lock (_frameLock)
             {
                 if (_latestRawFrame != null && !_latestRawFrame.IsDisposed && !_latestRawFrame.Empty() && !IsStreaming)
                 {
-                    using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(_latestRawFrame, _alprEngine.ScaleRoi, null, null, value);
+                    using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(_latestRawFrame, _alprEngine.ScaleRoi, null, null, ShowRoiOverlay);
                     LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(overlayMat);
                 }
             }
