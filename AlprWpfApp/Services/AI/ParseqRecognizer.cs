@@ -96,8 +96,10 @@ namespace AlprWpfApp.Services.AI
         }
 
         /// <summary>
-        /// Tiền xử lý trực tiếp về kích thước 128x32 bằng Cubic và chuẩn hóa ImageNet NCHW
-        /// Đồng bộ 100% với transforms.Resize((32, 128)) trong Python PARSeq gốc.
+        /// Tiền xử lý theo cơ chế Aspect-Ratio Preserved Canvas Padding:
+        /// Giữ nguyên tỷ lệ chiều rộng/chiều cao tự nhiên khi resize về chiều cao 32px (naturalW = src.Width * 32 / src.Height),
+        /// sau đó dán vào Canvas đen 128x32 và chuẩn hóa ImageNet NCHW.
+        /// Giúp bảo toàn 100% hình dạng nét chữ (chữ 'C', 'R', 'P', 'S'...) không bị biến dạng méo ngang.
         /// </summary>
         public DenseTensor<float> PreprocessForParseq(Mat src)
         {
@@ -110,11 +112,26 @@ namespace AlprWpfApp.Services.AI
             else
                 Cv2.CvtColor(src, rgb, ColorConversionCodes.BGR2RGB);
 
-            // 2. Resize trực tiếp về (128, 32) bằng Cubic (chuẩn Python PARSeq)
-            using var resized = new Mat();
-            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(_targetWidth, _targetHeight), 0, 0, InterpolationFlags.Cubic);
+            int srcH = Math.Max(1, rgb.Rows);
+            int srcW = Math.Max(1, rgb.Cols);
 
-            // 3. Chuyển đổi thành NCHW Tensor [1, 3, 32, 128] chuẩn ImageNet bằng con trỏ tuyến tính (< 0.05ms)
+            // 2. Tính chiều rộng giữ nguyên tỷ lệ tự nhiên: targetH = 32
+            int naturalW = (int)Math.Round(srcW * (32.0 / srcH));
+            naturalW = Math.Clamp(naturalW, 16, _targetWidth);
+
+            using var resized = new Mat();
+            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(naturalW, _targetHeight), 0, 0, InterpolationFlags.Cubic);
+
+            // Nếu ảnh ban đầu nhỏ (w < 64 hoặc h < 20), làm nét nhẹ ảnh resized để phục hồi viền ký tự
+            using var sharpResized = (srcW < 64 || srcH < 20) ? SharpenPlate(resized) : null;
+            Mat finalResized = sharpResized ?? resized;
+
+            // 3. Tạo Canvas đen 128x32 chuẩn NCHW và dán ảnh đã resize vào mép trái canvas
+            using var canvas = new Mat(_targetHeight, _targetWidth, MatType.CV_8UC3, new Scalar(0, 0, 0));
+            using var canvasRoi = new Mat(canvas, new OpenCvSharp.Rect(0, 0, naturalW, _targetHeight));
+            finalResized.CopyTo(canvasRoi);
+
+            // 4. Chuyển đổi Canvas 128x32 thành NCHW Tensor [1, 3, 32, 128] chuẩn ImageNet (< 0.05ms)
             int totalPixels = _targetHeight * _targetWidth;
             unsafe
             {
@@ -124,7 +141,7 @@ namespace AlprWpfApp.Services.AI
                     float* gChannel = pDst + totalPixels;
                     float* bChannel = pDst + (2 * totalPixels);
 
-                    byte* pSrc = resized.DataPointer;
+                    byte* pSrc = canvas.DataPointer;
                     const float inv255 = 1.0f / 255.0f;
                     const float rMean = 0.485f, gMean = 0.456f, bMean = 0.406f;
                     const float rInvStd = 1.0f / 0.229f, gInvStd = 1.0f / 0.224f, bInvStd = 1.0f / 0.225f;

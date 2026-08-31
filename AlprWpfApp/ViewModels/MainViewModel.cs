@@ -84,6 +84,25 @@ namespace AlprWpfApp.ViewModels
         private bool _isPlateValid;
 
         [ObservableProperty]
+        private bool _showRoiOverlay = true;
+
+        // Cấu hình Vùng nhận diện bàn cân (Scale ROI Tinh Chỉnh)
+        [ObservableProperty]
+        private int _roiX = 22;
+
+        [ObservableProperty]
+        private int _roiY = 10;
+
+        [ObservableProperty]
+        private int _roiWidth = 56;
+
+        [ObservableProperty]
+        private int _roiHeight = 88;
+
+        [ObservableProperty]
+        private bool _isRoiPanelExpanded = false;
+
+        [ObservableProperty]
         private double _yoloLatencyMs;
 
         [ObservableProperty]
@@ -239,6 +258,57 @@ namespace AlprWpfApp.ViewModels
             }
         }
 
+        partial void OnRoiXChanged(int value) => UpdateScaleRoiFromSettings();
+        partial void OnRoiYChanged(int value) => UpdateScaleRoiFromSettings();
+        partial void OnRoiWidthChanged(int value) => UpdateScaleRoiFromSettings();
+        partial void OnRoiHeightChanged(int value) => UpdateScaleRoiFromSettings();
+
+        private void UpdateScaleRoiFromSettings()
+        {
+            float rx = Math.Clamp(RoiX / 100.0f, 0.0f, 1.0f);
+            float ry = Math.Clamp(RoiY / 100.0f, 0.0f, 1.0f);
+            float rw = Math.Clamp(RoiWidth / 100.0f, 0.01f, 1.0f - rx);
+            float rh = Math.Clamp(RoiHeight / 100.0f, 0.01f, 1.0f - ry);
+
+            _alprEngine.ScaleRoi = new Rect2f(rx, ry, rw, rh);
+
+            lock (_frameLock)
+            {
+                if (_latestRawFrame != null && !_latestRawFrame.IsDisposed && !_latestRawFrame.Empty() && !IsStreaming)
+                {
+                    using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(_latestRawFrame, _alprEngine.ScaleRoi, null, null, ShowRoiOverlay);
+                    LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(overlayMat);
+                }
+            }
+        }
+
+        [RelayCommand]
+        public void ResetRoiToDefault()
+        {
+            RoiX = 22;
+            RoiY = 10;
+            RoiWidth = 56;
+            RoiHeight = 88;
+        }
+
+        [RelayCommand]
+        public void ToggleRoiPanel()
+        {
+            IsRoiPanelExpanded = !IsRoiPanelExpanded;
+        }
+
+        partial void OnShowRoiOverlayChanged(bool value)
+        {
+            lock (_frameLock)
+            {
+                if (_latestRawFrame != null && !_latestRawFrame.IsDisposed && !_latestRawFrame.Empty() && !IsStreaming)
+                {
+                    using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(_latestRawFrame, _alprEngine.ScaleRoi, null, null, value);
+                    LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(overlayMat);
+                }
+            }
+        }
+
         /// <summary>
         /// Xử lý trực tiếp 1 khung hình Mat đồng bộ và cập nhật UI ngay lập tức
         /// </summary>
@@ -253,9 +323,11 @@ namespace AlprWpfApp.ViewModels
                 _latestRawFrame = mat.Clone();
             }
 
-            LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(mat);
-
             var res = _alprEngine.ProcessFrame(mat);
+
+            using var overlayMat = OpenCvImageHelper.DrawRoiAndPlateOverlay(mat, _alprEngine.ScaleRoi, res.BoundingBox, res.IsSuccess ? res.PlateNumber : null, ShowRoiOverlay);
+            LiveVideoFrame = OpenCvImageHelper.MatToBitmapSource(overlayMat);
+
             UpdateUiWithResult(res);
         }
 

@@ -176,8 +176,8 @@ namespace AlprWpfApp.Services.AI
                         int boxW = (int)Math.Max(1, x2 - x1);
                         int boxH = (int)Math.Max(1, y2 - y1);
 
-                        // 1. Kích thước tối thiểu trên ảnh gốc: w >= 20, h >= 14
-                        if (boxW < 20 || boxH < 14)
+                        // 1. Kích thước tối thiểu trên ảnh gốc: w >= 12, h >= 8 (bắt được biển số ở cự ly xa / cam trên cao)
+                        if (boxW < 12 || boxH < 8)
                             continue;
 
                         // 2. Bộ lọc hình học Biển số: ratio in [0.8, 6.0]
@@ -219,7 +219,7 @@ namespace AlprWpfApp.Services.AI
             return Postprocess(outputTensor, scale, padLeft, padTop, origW, origH, confThreshold ?? _confThreshold, nmsThreshold ?? _nmsThreshold);
         }
 
-        private static List<PlateDetectionBox> ApplyNms(List<PlateDetectionBox> boxes, float nmsThreshold)
+        public static List<PlateDetectionBox> ApplyNms(List<PlateDetectionBox> boxes, float nmsThreshold)
         {
             if (boxes == null || boxes.Count == 0)
                 return new List<PlateDetectionBox>();

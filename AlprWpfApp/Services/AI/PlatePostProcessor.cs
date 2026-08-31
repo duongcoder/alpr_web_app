@@ -15,6 +15,10 @@ namespace AlprWpfApp.Services.AI
     {
         private static readonly Regex CleanRegex = new(@"[^A-Z0-9Đ]", RegexOptions.Compiled);
         private static readonly Regex StrictPlateRegex = new(@"^\d{2}[A-ZĐ]{1,2}\d{4,5}$", RegexOptions.Compiled);
+        private static readonly HashSet<string> ValidTwoLetterSeries = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "LD", "DA", "MK", "KT", "NG", "QT", "CV", "NN", "CD", "TD", "HC"
+        };
 
         /// <summary>
         /// Chuyển đổi ký tự chữ cái bị đọc nhầm sang chữ số (Dùng cho mã tỉnh và dãy số đuôi)
@@ -38,19 +42,21 @@ namespace AlprWpfApp.Services.AI
 
         /// <summary>
         /// Chuyển đổi ký tự chữ số bị đọc nhầm sang chữ cái (Dùng cho ký tự sê-ri)
+        /// '0' -> 'C'; '1' -> 'T'; '2' -> 'Z'; '3' -> 'E'; '4' -> 'A'; '5' -> 'S'; '6' -> 'G'; '8' -> 'B'
         /// </summary>
         public static char MapDigitToLetter(char c)
         {
-            if (char.IsLetter(c) || c == 'Đ') return char.ToUpperInvariant(c);
+            if (char.IsLetter(c) || c == 'Đ' || c == 'đ') return char.ToUpperInvariant(c);
             return c switch
             {
-                '0' or '2' => 'C',
-                '4' => 'A',
-                '8' => 'B',
-                '5' => 'S',
+                '0' => 'C',
                 '1' => 'T',
-                '6' => 'G',
+                '2' => 'Z',
                 '3' => 'E',
+                '4' => 'A',
+                '5' => 'S',
+                '6' => 'G',
+                '8' => 'B',
                 '9' => 'P',
                 '7' => 'T',
                 _ => 'C'
@@ -96,7 +102,7 @@ namespace AlprWpfApp.Services.AI
                     string line2 = validLines[1];
 
                     // Nếu dòng 1 chỉ toàn số và dòng 2 có chữ cái -> Đảo lại thứ tự
-                    if (line1.All(char.IsDigit) && line2.Any(c => char.IsLetter(c) || c == 'Đ') && !line1.Any(c => char.IsLetter(c) || c == 'Đ'))
+                    if (line1.All(char.IsDigit) && line2.Any(c => char.IsLetter(c) || c == 'Đ' || c == 'đ') && !line1.Any(c => char.IsLetter(c) || c == 'Đ' || c == 'đ'))
                     {
                         var temp = line1;
                         line1 = line2;
@@ -108,7 +114,7 @@ namespace AlprWpfApp.Services.AI
                     line1 = Regex.Replace(line1, @"^(\d{2})([A-Z0-9])\2+$", "$1$2");
 
                     // Nếu dòng 1 bị đọc ngược chữ cái ra trước (vd: 'H02' -> '20H', 'C20' -> '20C')
-                    if (line1.Length >= 3 && (char.IsLetter(line1[0]) || line1[0] == 'Đ') && char.IsDigit(line1[1]) && char.IsDigit(line1[2]))
+                    if (line1.Length >= 3 && (char.IsLetter(line1[0]) || line1[0] == 'Đ' || line1[0] == 'đ') && char.IsDigit(line1[1]) && char.IsDigit(line1[2]))
                     {
                         char d0 = line1[2];
                         char d1 = line1[1];
@@ -134,16 +140,29 @@ namespace AlprWpfApp.Services.AI
                         int prov = (d0 - '0') * 10 + (d1 - '0');
                         if (prov < 11) d0 = '2';
 
-                        char s2 = MapDigitToLetter(line1[2]);
+                        // Ký tự thứ 3 (Sê-ri): Nếu OCR ra CHỮ CÁI hợp lệ -> GIỮ NGUYÊN 100%, KHÔNG MAP LẠI. Chỉ map khi là CHỮ SỐ.
+                        char rawSeries = line1[2];
+                        char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
+                            ? char.ToUpperInvariant(rawSeries)
+                            : (char.IsDigit(rawSeries) ? MapDigitToLetter(rawSeries) : char.ToUpperInvariant(rawSeries));
 
-                        // Nếu có sê-ri 2 chữ cái (vd: LD, DA)
-                        if (line1.Length >= 4 && (char.IsLetter(line1[3]) || line1[3] == 'Đ'))
+                        // Dòng 1 biển vuông: Bắt buộc là 2 chữ số tỉnh + 1 chữ cái sê-ri (20C, 29C, 29R, 20H...)
+                        // Chỉ nhận sê-ri 2 chữ cái nếu là sê-ri hợp lệ (LD, DA, KT, NG, QT...)
+                        if (line1.Length >= 4 && (char.IsLetter(line1[3]) || line1[3] == 'Đ' || line1[3] == 'đ'))
                         {
-                            cleanLine1 = $"{d0}{d1}{s2}{line1[3]}";
+                            string s2Letters = $"{s2}{char.ToUpperInvariant(line1[3])}";
+                            if (ValidTwoLetterSeries.Contains(s2Letters))
+                            {
+                                cleanLine1 = $"{d0}{d1}{s2Letters}";
+                            }
+                            else
+                            {
+                                cleanLine1 = $"{d0}{d1}{s2}";
+                            }
                         }
                         else
                         {
-                            // Dòng 1 Ô tô chỉ nhận đúng 3 ký tự (2 số tỉnh + 1 chữ sê-ri, vd: 20C, 20H)
+                            // Dòng 1 Ô tô chuẩn 3 ký tự (2 số tỉnh + 1 chữ sê-ri, vd: 20C, 20H, 29R)
                             cleanLine1 = $"{d0}{d1}{s2}";
                         }
                     }
@@ -184,14 +203,28 @@ namespace AlprWpfApp.Services.AI
                     char d1 = MapCharToDigit(full[1]);
                     if (((d0 - '0') * 10 + (d1 - '0')) < 11) d0 = '2';
 
-                    char s2 = MapDigitToLetter(full[2]);
+                    // Ký tự thứ 3 (Sê-ri): Nếu OCR ra CHỮ CÁI hợp lệ -> GIỮ NGUYÊN 100%, KHÔNG MAP LẠI. Chỉ map khi là CHỮ SỐ.
+                    char rawSeries = full[2];
+                    char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
+                        ? char.ToUpperInvariant(rawSeries)
+                        : (char.IsDigit(rawSeries) ? MapDigitToLetter(rawSeries) : char.ToUpperInvariant(rawSeries));
+
                     string seriesStr = $"{s2}";
                     string tailRaw;
 
-                    if (full.Length >= 7 && (char.IsLetter(full[3]) || full[3] == 'Đ'))
+                    if (full.Length >= 7 && (char.IsLetter(full[3]) || full[3] == 'Đ' || full[3] == 'đ'))
                     {
-                        seriesStr = $"{s2}{full[3]}";
-                        tailRaw = full.Substring(4);
+                        string s2Letters = $"{s2}{char.ToUpperInvariant(full[3])}";
+                        if (ValidTwoLetterSeries.Contains(s2Letters))
+                        {
+                            seriesStr = s2Letters;
+                            tailRaw = full.Substring(4);
+                        }
+                        else
+                        {
+                            seriesStr = $"{s2}";
+                            tailRaw = full.Substring(3);
+                        }
                     }
                     else
                     {
@@ -236,8 +269,19 @@ namespace AlprWpfApp.Services.AI
             if (clean.All(char.IsDigit) || !clean.Any(c => char.IsLetter(c) || c == 'Đ'))
                 return false;
 
-            return StrictPlateRegex.IsMatch(clean) ||
-                   (char.IsDigit(clean[0]) && char.IsDigit(clean[1]) && (char.IsLetter(clean[2]) || clean[2] == 'Đ'));
+            // Biển 1 chữ cái sê-ri chuẩn (vd: 20C22717, 29C12345, 30A12345, 29B112345)
+            if (Regex.IsMatch(clean, @"^\d{2}[A-ZĐ]\d{4,6}$") || Regex.IsMatch(clean, @"^\d{2}[A-ZĐ]\d{1}\d{4,5}$"))
+                return true;
+
+            // Biển sê-ri 2 chữ cái đặc biệt (vd: 29LD12345, 80NG12345)
+            var match2 = Regex.Match(clean, @"^\d{2}([A-Z]{2})\d{4,5}$");
+            if (match2.Success)
+            {
+                string series2 = match2.Groups[1].Value;
+                return ValidTwoLetterSeries.Contains(series2);
+            }
+
+            return false;
         }
 
         /// <summary>
