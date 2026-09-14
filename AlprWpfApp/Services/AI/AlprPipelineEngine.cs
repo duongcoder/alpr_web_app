@@ -169,18 +169,15 @@ namespace AlprWpfApp.Services.AI
             {
                 var box = candidate.Box;
 
-                // Dynamic Bounding Box Padding (Mở rộng lề 10% X, 12% Y để không bao giờ bị cắt lẹm vào số mép biên)
-                int padX = (int)Math.Round(box.Width * 0.10f);
-                int padY = (int)Math.Round(box.Height * 0.12f);
-                int x1 = Math.Max(0, box.X - padX);
-                int y1 = Math.Max(0, box.Y - padY);
-                int x2 = Math.Min(imgWidth, box.X + box.Width + padX);
-                int y2 = Math.Min(imgHeight, box.Y + box.Height + padY);
+                // Bounding Box Safety Margin (Mở rộng lề 5% X, 8% Y để bảo vệ ký tự biên ngoài)
+                int padX = (int)(box.Width * 0.05f);
+                int padY = (int)(box.Height * 0.08f);
+                int x = Math.Max(0, (int)box.X - padX);
+                int y = Math.Max(0, (int)box.Y - padY);
+                int w = Math.Min(imgWidth - x, (int)box.Width + padX * 2);
+                int h = Math.Min(imgHeight - y, (int)box.Height + padY * 2);
 
-                int safeW = Math.Max(1, x2 - x1);
-                int safeH = Math.Max(1, y2 - y1);
-
-                using var safeCrop = new Mat(inputFrame, new OpenCvSharp.Rect(x1, y1, safeW, safeH));
+                using var safeCrop = new Mat(inputFrame, new OpenCvSharp.Rect(x, y, w, h));
                 var (rawLines, ocrConf) = _parseqRecognizer.RecognizePlateLines(safeCrop);
                 string cleanPlate = PlatePostProcessor.ProcessRawTextsToCleanPlate(rawLines);
 
@@ -213,7 +210,7 @@ namespace AlprWpfApp.Services.AI
                 if (candidateScore > highestCandidateScore)
                 {
                     highestCandidateScore = candidateScore;
-                    bestBox = new OpenCvSharp.Rect(x1, y1, safeW, safeH);
+                    bestBox = new OpenCvSharp.Rect(x, y, w, h);
                     bestCrop?.Dispose();
                     bestCrop = safeCrop.Clone();
                     bestCleanPlate = cleanPlate;

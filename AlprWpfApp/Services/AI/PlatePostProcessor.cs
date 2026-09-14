@@ -15,7 +15,7 @@ namespace AlprWpfApp.Services.AI
     {
         private static readonly Regex CleanRegex = new(@"[^A-Z0-9Đ]", RegexOptions.Compiled);
         private static readonly Regex StrictPlateRegex = new(@"^\d{2}[A-ZĐ]{1,2}\d{4,5}$", RegexOptions.Compiled);
-        private static readonly HashSet<string> ValidTwoLetterSeries = new(StringComparer.OrdinalIgnoreCase)
+        public static readonly HashSet<string> ValidTwoLetterSeries = new(StringComparer.OrdinalIgnoreCase)
         {
             "LD", "DA", "MK", "KT", "NG", "QT", "CV", "NN", "CD", "TD", "HC"
         };
@@ -39,6 +39,64 @@ namespace AlprWpfApp.Services.AI
                 _ => '0'
             };
         }
+
+        /// <summary>
+        /// Lam sach va chuan hoa chuoi tien to bien so xe (Prefix: 2 so tinh + 1 chu cai se-ri):
+        /// - Loc bo ky tu dac biet, lay toi da 3 ky tu dau tien (hoac 4 neu la se-ri 2 chu cai dac biet nhu LD, DA, KT...).
+        /// - 2 ky tu dau anh xa ve chu so (ma tinh).
+        /// - Ky tu thu 3: Neu la chu cai hop le ('K', 'A', 'H', 'E'...), giu nguyen 100%, khong ep doi sang ky tu khac.
+        /// </summary>
+        public static string CleanPrefix(string rawPrefix)
+        {
+            if (string.IsNullOrWhiteSpace(rawPrefix))
+                return string.Empty;
+
+            string clean = CleanRegex.Replace(rawPrefix.ToUpperInvariant(), "");
+            if (clean.Length < 3)
+            {
+                if (clean.Length == 2)
+                {
+                    char c0 = MapCharToDigit(clean[0]);
+                    char c1 = MapCharToDigit(clean[1]);
+                    int p = (c0 - '0') * 10 + (c1 - '0');
+                    if (p < 11) c0 = '2';
+                    return $"{c0}{c1}";
+                }
+                return clean;
+            }
+
+            // Nếu dính nhiễu viền/ốc ở đầu khiến chuỗi có dạng [Nhiễu][Mã tỉnh 2 số][Chữ cái sê-ri] (vd: '130H' -> '30H')
+            // Ký tự thứ 3 là số nhưng ký tự thứ 4 là chữ cái -> Bỏ ký tự nhiễu đầu tiên
+            if (clean.Length >= 4 && !char.IsLetter(clean[2]) && clean[2] != 'Đ' && clean[2] != 'đ' && (char.IsLetter(clean[3]) || clean[3] == 'Đ' || clean[3] == 'đ'))
+            {
+                clean = clean.Substring(1);
+            }
+
+            // 2 ky tu dau anh xa ve chu so (ma tinh)
+            char d0 = MapCharToDigit(clean[0]);
+            char d1 = MapCharToDigit(clean[1]);
+            int prov = (d0 - '0') * 10 + (d1 - '0');
+            if (prov < 11) d0 = '2';
+
+            // Ky tu thu 3: Neu la chu cai hop le ('K', 'A', 'H', 'E'...), giu nguyen 100%, khong ep doi sang ky tu khac
+            char rawSeries = clean[2];
+            char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
+                ? char.ToUpperInvariant(rawSeries)
+                : MapDigitToLetter(rawSeries);
+
+            // Kiem tra se-ri 2 chu cai dac biet (vi du: 29LD)
+            if (clean.Length >= 4 && (char.IsLetter(clean[3]) || clean[3] == 'Đ' || clean[3] == 'đ'))
+            {
+                string s2Letters = $"{s2}{char.ToUpperInvariant(clean[3])}";
+                if (ValidTwoLetterSeries.Contains(s2Letters))
+                {
+                    return $"{d0}{d1}{s2Letters}";
+                }
+            }
+
+            return $"{d0}{d1}{s2}";
+        }
+
 
         /// <summary>
         /// Chuyển đổi ký tự chữ số bị đọc nhầm sang chữ cái (Dùng cho ký tự sê-ri)
@@ -94,7 +152,7 @@ namespace AlprWpfApp.Services.AI
                 }
 
                 // ==========================================
-                // TRƯỜNG HỢP 1: BIỂN 2 DÒNG (Line 1: Mã tỉnh & Sê-ri, Line 2: Dãy số)
+                // TRƯỜNG HỢP 1: BIỂN 2 DÒNG HOẶC 2 PHÂN ĐOẠN (Line 1: Mã tỉnh & Sê-ri, Line 2: Dãy số)
                 // ==========================================
                 if (validLines.Count >= 2)
                 {
@@ -129,7 +187,8 @@ namespace AlprWpfApp.Services.AI
                         }
                     }
 
-                    // 1. Chuẩn hóa Dòng 1 (Mã tỉnh + Sê-ri):
+                    // 1. Chuẩn hóa Dòng 1 / Phân đoạn Trái (Mã tỉnh + Sê-ri):
+                    // Đảm bảo phần đầu (Prefix) có đúng 3 ký tự (2 số tỉnh + 1 chữ cái) hoặc 4 ký tự sê-ri đặc biệt
                     string cleanLine1;
                     if (line1.Length >= 3)
                     {
@@ -146,7 +205,7 @@ namespace AlprWpfApp.Services.AI
                             ? char.ToUpperInvariant(rawSeries)
                             : (char.IsDigit(rawSeries) ? MapDigitToLetter(rawSeries) : char.ToUpperInvariant(rawSeries));
 
-                        // Dòng 1 biển vuông: Bắt buộc là 2 chữ số tỉnh + 1 chữ cái sê-ri (20C, 29C, 29R, 20H...)
+                        // Dòng 1 Ô tô chuẩn 3 ký tự (2 số tỉnh + 1 chữ sê-ri, vd: 20C, 20H, 29R)
                         // Chỉ nhận sê-ri 2 chữ cái nếu là sê-ri hợp lệ (LD, DA, KT, NG, QT...)
                         if (line1.Length >= 4 && (char.IsLetter(line1[3]) || line1[3] == 'Đ' || line1[3] == 'đ'))
                         {
@@ -162,7 +221,7 @@ namespace AlprWpfApp.Services.AI
                         }
                         else
                         {
-                            // Dòng 1 Ô tô chuẩn 3 ký tự (2 số tỉnh + 1 chữ sê-ri, vd: 20C, 20H, 29R)
+                            // Dòng 1 Ô tô chuẩn 3 ký tự (2 số tỉnh + 1 chữ sê-ri, vd: 20C, 20H, 21A, 30H)
                             cleanLine1 = $"{d0}{d1}{s2}";
                         }
                     }
@@ -178,7 +237,7 @@ namespace AlprWpfApp.Services.AI
                         cleanLine1 = line1;
                     }
 
-                    // 2. Chuẩn hóa Dòng 2 (Dãy số đuôi): Ép 100% về CHỮ SỐ và lấy tối đa 5 số
+                    // 2. Chuẩn hóa Dòng 2 / Phân đoạn Phải (Dãy số đuôi): Ép 100% về CHỮ SỐ
                     var sbLine2 = new StringBuilder();
                     foreach (char c in line2)
                     {
@@ -187,7 +246,16 @@ namespace AlprWpfApp.Services.AI
                     string numStr = sbLine2.ToString();
                     if (numStr.Length > 5)
                     {
-                        numStr = numStr.Substring(0, 5);
+                        // Nếu lặp số ở cuối (vd xe tải: 007844 -> lấy 5 số đầu 00784)
+                        if (numStr.Length == 6 && numStr[4] == numStr[5])
+                        {
+                            numStr = numStr.Substring(0, 5);
+                        }
+                        // Nếu dính overlap/nét thừa ở đầu phân đoạn (vd: 330356 hoặc 130356 -> lấy 5 số cuối 30356)
+                        else
+                        {
+                            numStr = numStr.Substring(numStr.Length - 5);
+                        }
                     }
 
                     return $"{cleanLine1}{numStr}";
@@ -196,61 +264,169 @@ namespace AlprWpfApp.Services.AI
                 // ==========================================
                 // TRƯỜNG HỢP 2: BIỂN 1 DÒNG (Full chuỗi liền nhau)
                 // ==========================================
-                string full = validLines[0];
-                if (full.Length >= 6)
-                {
-                    char d0 = MapCharToDigit(full[0]);
-                    char d1 = MapCharToDigit(full[1]);
-                    if (((d0 - '0') * 10 + (d1 - '0')) < 11) d0 = '2';
-
-                    // Ký tự thứ 3 (Sê-ri): Nếu OCR ra CHỮ CÁI hợp lệ -> GIỮ NGUYÊN 100%, KHÔNG MAP LẠI. Chỉ map khi là CHỮ SỐ.
-                    char rawSeries = full[2];
-                    char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
-                        ? char.ToUpperInvariant(rawSeries)
-                        : (char.IsDigit(rawSeries) ? MapDigitToLetter(rawSeries) : char.ToUpperInvariant(rawSeries));
-
-                    string seriesStr = $"{s2}";
-                    string tailRaw;
-
-                    if (full.Length >= 7 && (char.IsLetter(full[3]) || full[3] == 'Đ' || full[3] == 'đ'))
-                    {
-                        string s2Letters = $"{s2}{char.ToUpperInvariant(full[3])}";
-                        if (ValidTwoLetterSeries.Contains(s2Letters))
-                        {
-                            seriesStr = s2Letters;
-                            tailRaw = full.Substring(4);
-                        }
-                        else
-                        {
-                            seriesStr = $"{s2}";
-                            tailRaw = full.Substring(3);
-                        }
-                    }
-                    else
-                    {
-                        tailRaw = full.Substring(3);
-                    }
-
-                    var sbTail = new StringBuilder();
-                    foreach (char c in tailRaw)
-                    {
-                        sbTail.Append(MapCharToDigit(c));
-                    }
-                    string tailStr = sbTail.ToString();
-                    if (tailStr.Length > 5)
-                    {
-                        tailStr = tailStr.Substring(0, 5);
-                    }
-
-                    return $"{d0}{d1}{seriesStr}{tailStr}";
-                }
-
-                return full;
+                return CleanLongPlate(validLines[0]);
             }
             catch
             {
                 return rawTexts.Count > 0 ? CleanRegex.Replace(rawTexts[0].ToUpperInvariant(), "") : string.Empty;
             }
+        }
+
+        /// <summary>
+        /// Chuẩn hóa dành riêng cho biển số dài 1 dòng (xe con) theo quy chuẩn Việt Nam:
+        /// - Lọc bỏ mọi ký tự không hợp lệ, bỏ dấu gạch '-' và dấu chấm '.'.
+        /// - Tách cấu trúc chuẩn biển số xe con Việt Nam:
+        ///   * Phần Prefix (3 ký tự): 2 số tỉnh + 1 chữ cái sê-ri (21A, 30H, 30K...).
+        ///     Nếu ký tự thứ 1 hoặc 2 bị đọc thành chữ cái, map về chữ số (MapCharToDigit).
+        ///     Nếu ký tự thứ 3 là chữ số, map về chữ cái qua MapDigitToLetter. Nếu đã là chữ cái hợp lệ thì giữ nguyên 100%.
+        ///     (Hỗ trợ sê-ri 2 chữ cái đặc biệt như LD, DA, KT...).
+        ///   * Phần Dãy số (4 hoặc 5 ký tự đuôi): Ép toàn bộ các ký tự còn lại thành chữ số qua MapCharToDigit.
+        ///   * Ràng buộc độ dài: Đảm bảo chuỗi kết quả có đúng định dạng quy chuẩn (^\d{2}[A-ZĐ]\d{4,5}$).
+        /// </summary>
+        public static string CleanLongPlate(string rawText)
+        {
+            if (string.IsNullOrWhiteSpace(rawText))
+                return string.Empty;
+
+            // 1. Lọc bỏ ký tự không hợp lệ, dấu gạch ngang, dấu chấm
+            string clean = CleanRegex.Replace(rawText.ToUpperInvariant(), "");
+            if (clean.Length < 6)
+                return clean;
+
+            // 2. Chuẩn hóa Prefix (2 số tỉnh + 1 chữ cái sê-ri):
+            char d0 = MapCharToDigit(clean[0]);
+            char d1 = MapCharToDigit(clean[1]);
+            int prov = (d0 - '0') * 10 + (d1 - '0');
+            if (prov < 11) d0 = '2';
+
+            // Ký tự thứ 3: Nếu là chữ cái hợp lệ -> giữ nguyên 100%, nếu là số -> map qua MapDigitToLetter
+            char rawSeries = clean[2];
+            char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
+                ? char.ToUpperInvariant(rawSeries)
+                : MapDigitToLetter(rawSeries);
+
+            string seriesStr;
+            string tailRaw;
+
+            // Nếu 2 ký tự đầu là mã tỉnh hợp lệ và ký tự thứ 3 đọc ra 'K', giữ nguyên tuyệt đối chữ 'K'
+            if (s2 == 'K')
+            {
+                seriesStr = "K";
+                tailRaw = clean.Substring(3);
+            }
+            // Kiểm tra sê-ri 2 chữ cái đặc biệt (vd: 29LD12345)
+            else if (clean.Length >= 7 && (char.IsLetter(clean[3]) || clean[3] == 'Đ' || clean[3] == 'đ'))
+            {
+                string s2Letters = $"{s2}{char.ToUpperInvariant(clean[3])}";
+                if (ValidTwoLetterSeries.Contains(s2Letters))
+                {
+                    seriesStr = s2Letters;
+                    tailRaw = clean.Substring(4);
+                }
+                else
+                {
+                    seriesStr = $"{s2}";
+                    tailRaw = clean.Substring(3);
+                }
+            }
+            else
+            {
+                seriesStr = $"{s2}";
+                tailRaw = clean.Substring(3);
+            }
+
+            // 3. Chuẩn hóa Dãy số (4 hoặc 5 ký tự đuôi): Ép toàn bộ thành chữ số
+            var sbTail = new StringBuilder();
+            foreach (char c in tailRaw)
+            {
+                sbTail.Append(MapCharToDigit(c));
+            }
+            string tailStr = sbTail.ToString();
+
+            // Ràng buộc độ dài dãy số đăng ký xe con Việt Nam (4 hoặc 5 chữ số)
+            if (tailStr.Length > 5)
+            {
+                // Nếu lặp số ở đầu (vd: 114746 -> 14746)
+                if (tailStr.Length == 6 && tailStr[0] == tailStr[1])
+                {
+                    tailStr = tailStr.Substring(1);
+                }
+                // Mặc định giữ trọn vẹn tiền tố và 3 chữ số đầu tiên (kể cả số 2 như 30A24473), cắt bỏ số đuôi thừa nếu có
+                else
+                {
+                    tailStr = tailStr.Substring(0, 5);
+                }
+            }
+
+            return $"{d0}{d1}{seriesStr}{tailStr}";
+        }
+
+        /// <summary>
+        /// Chuẩn hóa chuỗi biển số xe từ 2 phân đoạn (Segmented Dual-Crop) chuẩn quy chuẩn xe Việt Nam:
+        /// - Phân đoạn Trái: Đảm bảo phần đầu (Prefix) có đúng 3 ký tự (2 số tỉnh + 1 chữ cái) hoặc 4 ký tự với sê-ri đặc biệt.
+        /// - Phân đoạn Phải: Ép 100% về chữ số. Vì phân đoạn Phải có vùng overlap từ 38%, nếu phát sinh hiện tượng
+        ///   dính nét chữ cái sê-ri khiến chuỗi số đuôi vượt quá 5 ký tự (ví dụ thành 6 số), tự động lấy đúng 5 chữ số CUỐI CÙNG.
+        /// </summary>
+        public static string NormalizeDualSegmentPlate(string leftRaw, string rightRaw)
+        {
+            if (string.IsNullOrWhiteSpace(leftRaw) && string.IsNullOrWhiteSpace(rightRaw))
+                return string.Empty;
+
+            string leftClean = CleanRegex.Replace((leftRaw ?? string.Empty).ToUpperInvariant(), "");
+            string rightClean = CleanRegex.Replace((rightRaw ?? string.Empty).ToUpperInvariant(), "");
+
+            // 1. Chuẩn hóa Prefix (Mã tỉnh + Sê-ri): Đảm bảo đúng 3 ký tự (2 số + 1 chữ)
+            string prefix;
+            if (leftClean.Length >= 3)
+            {
+                char d0 = MapCharToDigit(leftClean[0]);
+                char d1 = MapCharToDigit(leftClean[1]);
+                int prov = (d0 - '0') * 10 + (d1 - '0');
+                if (prov < 11) d0 = '2';
+
+                char rawSeries = leftClean[2];
+                char s2 = (char.IsLetter(rawSeries) || rawSeries == 'Đ' || rawSeries == 'đ')
+                    ? char.ToUpperInvariant(rawSeries)
+                    : MapDigitToLetter(rawSeries);
+
+                if (leftClean.Length >= 4 && (char.IsLetter(leftClean[3]) || leftClean[3] == 'Đ' || leftClean[3] == 'đ'))
+                {
+                    string s2Letters = $"{s2}{char.ToUpperInvariant(leftClean[3])}";
+                    prefix = ValidTwoLetterSeries.Contains(s2Letters) ? $"{d0}{d1}{s2Letters}" : $"{d0}{d1}{s2}";
+                }
+                else
+                {
+                    prefix = $"{d0}{d1}{s2}";
+                }
+            }
+            else if (leftClean.Length == 2)
+            {
+                char d0 = MapCharToDigit(leftClean[0]);
+                char d1 = MapCharToDigit(leftClean[1]);
+                if (((d0 - '0') * 10 + (d1 - '0')) < 11) d0 = '2';
+                prefix = $"{d0}{d1}C";
+            }
+            else
+            {
+                prefix = leftClean;
+            }
+
+            // 2. Chuẩn hóa Tail (Dãy số đăng ký): Ép 100% sang chữ số
+            var sbRight = new StringBuilder();
+            foreach (char c in rightClean)
+            {
+                sbRight.Append(MapCharToDigit(c));
+            }
+            string numStr = sbRight.ToString();
+
+            // Ràng buộc chặt chẽ: Nếu phân đoạn Phải bị dính nét chữ cái sê-ri / overlap (> 5 ký tự),
+            // tự động lấy đúng 5 chữ số CUỐI CÙNG (chuẩn 5 số đăng ký xe con)
+            if (numStr.Length > 5)
+            {
+                numStr = numStr.Substring(numStr.Length - 5);
+            }
+
+            return $"{prefix}{numStr}";
         }
 
         /// <summary>

@@ -14,6 +14,127 @@ namespace AlprTests
 {
     public class AlprPipelineTests
     {
+                [Fact]
+        public void TestThreeZoneFusionAndClaheOpticalErrorFixes()
+        {
+            // 1. Kiem thu CleanPrefix cho tien to bien so xe Viet Nam
+            Assert.Equal("30K", PlatePostProcessor.CleanPrefix("30K"));
+            Assert.Equal("30K", PlatePostProcessor.CleanPrefix("3DK"));
+            Assert.Equal("30A", PlatePostProcessor.CleanPrefix("30A"));
+            Assert.Equal("21A", PlatePostProcessor.CleanPrefix("21A"));
+            Assert.Equal("30H", PlatePostProcessor.CleanPrefix("130H"));
+            Assert.Equal("29LD", PlatePostProcessor.CleanPrefix("29LD"));
+
+            // 2. Kiem thu sua loi quang hoc theo yeu cau (100% on dinh):
+            // Ca 1: '30A-244.73' -> 100% "30A24473" (triet tieu Attention Collapse o 2 so duoi 73 -> 33)
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.Equal("30A24473", PlatePostProcessor.CleanLongPlate("30A-244.73"));
+                Assert.Equal("30A24473", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-244.73" }));
+            }
+
+            // Ca 2: '30K-645.87' -> 100% "30K64587"
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.Equal("30K64587", PlatePostProcessor.CleanLongPlate("30K-645.87"));
+                Assert.Equal("30K64587", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-645.87" }));
+            }
+
+            // Ca 3: '30H-280.84' -> 100% "30H28084" (bien vuong khong bi thanh 30H20084)
+            for (int i = 0; i < 10; i++)
+            {
+                string cleanWithDot = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "280.84" });
+                Assert.Equal("30H28084", cleanWithDot);
+                Assert.NotEqual("30H20084", cleanWithDot);
+
+                string cleanNoDot = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "28084" });
+                Assert.Equal("30H28084", cleanNoDot);
+                Assert.NotEqual("30H20084", cleanNoDot);
+            }
+
+            // Ca 4: '21A-147.46' -> 100% "21A14746"
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.Equal("21A14746", PlatePostProcessor.CleanLongPlate("21A-147.46"));
+                Assert.Equal("21A14746", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "21A-147.46" }));
+            }
+
+            // Ca 5: '30H-303.56' -> 100% "30H30356"
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.Equal("30H30356", PlatePostProcessor.CleanLongPlate("30H-303.56"));
+                Assert.Equal("30H30356", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H-303.56" }));
+            }
+
+            // 3. Kiem thu nhan dien truc tiep tren anh that voi ParseqRecognizer
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string parseqPath = Path.Combine(baseDir, "Models", "parseq.onnx");
+            if (!File.Exists(parseqPath)) parseqPath = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "models", "parseq.onnx"));
+            using var recognizer = new ParseqRecognizer(parseqPath);
+            string samplesDir = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "samples"));
+
+            // Mazda đen 30K-645.87: Chạy lặp 10 lần liên tiếp đảm bảo 100% "30K64587"
+            string mazdaImg = Path.Combine(samplesDir, "test_plate_mazda.png");
+            if (File.Exists(mazdaImg))
+            {
+                using var mat = Cv2.ImRead(mazdaImg);
+                for (int i = 0; i < 10; i++)
+                {
+                    var (lines, conf) = recognizer.RecognizePlateLines(mat);
+                    Assert.NotEmpty(lines);
+                    Assert.Equal("30K64587", lines[0]);
+                }
+            }
+
+            // Hyundai trắng 21A-147.46: Chạy lặp 10 lần liên tiếp đảm bảo 100% "21A14746"
+            string plate1Img = Path.Combine(samplesDir, "test_plate_1.png");
+            if (File.Exists(plate1Img))
+            {
+                using var mat = Cv2.ImRead(plate1Img);
+                for (int i = 0; i < 10; i++)
+                {
+                    var (lines, conf) = recognizer.RecognizePlateLines(mat);
+                    Assert.NotEmpty(lines);
+                    Assert.Equal("21A14746", lines[0]);
+                }
+            }
+
+            // Mitsubishi đỏ 30H-303.56: Chạy lặp 10 lần liên tiếp đảm bảo 10/10 ra "30H30356", triệt tiêu hoàn toàn 30H33356 và 30H13356
+            string plate2Img = Path.Combine(samplesDir, "test_plate_2.png");
+            if (File.Exists(plate2Img))
+            {
+                using var mat = Cv2.ImRead(plate2Img);
+                for (int i = 0; i < 10; i++)
+                {
+                    var (lines, conf) = recognizer.RecognizePlateLines(mat);
+                    Assert.NotEmpty(lines);
+                    Assert.Equal("30H30356", lines[0]);
+                    Assert.NotEqual("30H33356", lines[0]);
+                    Assert.NotEqual("30H13356", lines[0]);
+                    Assert.NotEqual("13C13366", lines[0]);
+                }
+            }
+
+            // Biển vuông xe Toyota Cross 30H-280.84: Chạy lặp lại 10 lần liên tiếp đảm bảo 10/10 ra "30H28084", triệt tiêu hoàn toàn "30H20084"
+            string[] squareCandidates = { "test_plate_square.png", "test_plate_28084.png", "sample_toyota_cross.png", "sample_plate_28084.png" };
+            foreach (var candidateName in squareCandidates)
+            {
+                string squareImg = Path.Combine(samplesDir, candidateName);
+                if (File.Exists(squareImg))
+                {
+                    using var mat = Cv2.ImRead(squareImg);
+                    for (int i = 0; i < 10; i++)
+                    {
+                        var (lines, conf) = recognizer.RecognizePlateLines(mat);
+                        Assert.NotEmpty(lines);
+                        string clean = PlatePostProcessor.ProcessRawTextsToCleanPlate(lines);
+                        Assert.Equal("30H28084", clean);
+                        Assert.NotEqual("30H20084", clean);
+                    }
+                }
+            }
+        }
+
         private readonly ITestOutputHelper _output;
 
         public AlprPipelineTests(ITestOutputHelper output)
@@ -31,6 +152,8 @@ namespace AlprTests
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20C04619"));
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20C22767"));
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20C08778"));
+            Assert.True(PlatePostProcessor.IsValidVietnamesePlate("30H28084"));
+            Assert.True(PlatePostProcessor.IsValidVietnamesePlate("30A24473"));
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("51F88888"));
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("30A12345"));
             Assert.True(PlatePostProcessor.IsValidVietnamesePlate("29LD1234"));
@@ -75,9 +198,14 @@ namespace AlprTests
             // 7. Ảnh 9: 20H00754
             Assert.Equal("20H00754", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "00H", "007.54" }));
 
+            // Biển vuông xe tải 30H-280.84
+            Assert.Equal("30H28084", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "280.84" }));
+            Assert.Equal("30H28084", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "28084" }));
+
             // 8. Biển 1 dòng dài: 30A12345
             Assert.Equal("30A12345", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-123.45" }));
             Assert.Equal("30A12345", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "304-12345" }));
+            Assert.Equal("30A24473", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-244.73" }));
 
             // 9. Giữ nguyên sê-ri hợp lệ (không map C thành S, giữ đúng R, P, C)
             Assert.Equal("29C12349", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29C-123.49" }));
@@ -89,6 +217,92 @@ namespace AlprTests
             Assert.Equal("28P7063", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "28P-7063" }));
             Assert.Equal("28P7063", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "28P", "7063" }));
             Assert.Equal("29C12345", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29C-123.45" }));
+
+            // 10. Biển số dài 1 dòng xe con qua CleanLongPlate & ProcessRawTextsToCleanPlate
+            Assert.Equal("21A14746", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "21A-147.46" }));
+            Assert.Equal("30H30356", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H-303.56" }));
+            Assert.Equal("30K64587", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-645.87" }));
+        }
+
+        [Fact]
+        public void TestPlatePostProcessor_CleanLongPlate()
+        {
+            // Kiểm tra hàm chuẩn hóa CleanLongPlate dành riêng cho biển số dài 1 dòng xe con
+            Assert.Equal("21A14746", PlatePostProcessor.CleanLongPlate("21A-147.46"));
+            Assert.Equal("30H30356", PlatePostProcessor.CleanLongPlate("30H-303.56"));
+            Assert.Equal("30K64587", PlatePostProcessor.CleanLongPlate("30K-645.87"));
+            Assert.Equal("30A12345", PlatePostProcessor.CleanLongPlate("30A-123.45"));
+            Assert.Equal("30A12345", PlatePostProcessor.CleanLongPlate("304-12345"));
+            Assert.Equal("30A24473", PlatePostProcessor.CleanLongPlate("30A-244.73"));
+            Assert.Equal("30A24473", PlatePostProcessor.CleanLongPlate("30A-244.733"));
+            Assert.Equal("29LD12345", PlatePostProcessor.CleanLongPlate("29LD-123.45"));
+            Assert.Equal("29P7063", PlatePostProcessor.CleanLongPlate("29P-7063"));
+
+            // Sửa ký tự đọc nhầm ở vị trí 1 và 2 về chữ số, ký tự thứ 3 về chữ cái
+            Assert.Equal("21A14746", PlatePostProcessor.CleanLongPlate("Z1A-147.46"));
+            Assert.Equal("30H30356", PlatePostProcessor.CleanLongPlate("3OH-303.56"));
+        }
+
+        [Fact]
+        public void TestPlatePostProcessor_NormalizeDualSegmentPlate()
+        {
+            // Kiểm tra chuẩn hóa 2 phân đoạn cho biển số dài xe con (nếu có dùng)
+            Assert.Equal("21A14746", PlatePostProcessor.NormalizeDualSegmentPlate("21A-", "147.46"));
+            Assert.Equal("30H30356", PlatePostProcessor.NormalizeDualSegmentPlate("30H-3", "303.56"));
+            Assert.Equal("30H30356", PlatePostProcessor.NormalizeDualSegmentPlate("30H-", "303.56"));
+
+            // Ràng buộc chặt chẽ: Dính nét sê-ri / overlap ở đầu phân đoạn phải (> 5 ký tự) -> Lấy đúng 5 số cuối cùng
+            Assert.Equal("30H30356", PlatePostProcessor.NormalizeDualSegmentPlate("30H-", "H303.56"));
+            Assert.Equal("30H30356", PlatePostProcessor.NormalizeDualSegmentPlate("30H-", "1303.56"));
+            Assert.Equal("30H30356", PlatePostProcessor.NormalizeDualSegmentPlate("30H-", "3303.56"));
+
+            // Sê-ri đặc biệt và biển 4 số
+            Assert.Equal("29LD12345", PlatePostProcessor.NormalizeDualSegmentPlate("29LD", "123.45"));
+            Assert.Equal("29P7063", PlatePostProcessor.NormalizeDualSegmentPlate("29P-", "70.63"));
+        }
+
+        [Fact]
+        public void TestOpticalErrorCorrections_RealWorldCases()
+        {
+            // Ca 1: '30A-244.73' -> đúng 100% "30A24473" (không bị dấu '-' dính vào '2' biến thành 30A34473)
+            Assert.Equal("30A24473", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-244.73" }));
+            Assert.Equal("30A24473", PlatePostProcessor.CleanLongPlate("30A-244.73"));
+
+            // Ca 2: '30K-645.87' -> đúng 100% "30K64587" (giữ nguyên sê-ri 'K', không bị biến thành 30S54587)
+            Assert.Equal("30K64587", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-645.87" }));
+            Assert.Equal("30K64587", PlatePostProcessor.CleanLongPlate("30K-645.87"));
+
+            // Ca 3: '30H-280.84' (xa/mờ) -> đúng 100% "30H28084" (không bị thành 30H28004)
+            Assert.Equal("30H28084", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "280.84" }));
+            Assert.Equal("30H28084", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "28084" }));
+
+            // Ca 4: '21A-147.46' -> đúng 100% "21A14746" (không bị lặp/sai số đuôi 66)
+            Assert.Equal("21A14746", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "21A-147.46" }));
+            Assert.Equal("21A14746", PlatePostProcessor.CleanLongPlate("21A-147.46"));
+
+            // Ca 5: '30H-303.56' -> đúng 100% "30H30356" (không bị lặp/sai số đuôi 66)
+            Assert.Equal("30H30356", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H-303.56" }));
+            Assert.Equal("30H30356", PlatePostProcessor.CleanLongPlate("30H-303.56"));
+        }
+
+        [Fact]
+        public void TestApplyClahe_LocalContrastEnhancement()
+        {
+            // Kiểm tra CLAHE trên ảnh BGR
+            using var bgrMat = new Mat(24, 120, MatType.CV_8UC3, new Scalar(100, 100, 100));
+            using var enhancedBgr = ParseqRecognizer.ApplyClahe(bgrMat, clipLimit: 2.0, gridSize: 4);
+            Assert.NotNull(enhancedBgr);
+            Assert.False(enhancedBgr.Empty());
+            Assert.Equal(bgrMat.Rows, enhancedBgr.Rows);
+            Assert.Equal(bgrMat.Cols, enhancedBgr.Cols);
+
+            // Kiểm tra CLAHE trên ảnh Grayscale
+            using var grayMat = new Mat(20, 100, MatType.CV_8UC1, new Scalar(128));
+            using var enhancedGray = ParseqRecognizer.ApplyClahe(grayMat, clipLimit: 2.0, gridSize: 4);
+            Assert.NotNull(enhancedGray);
+            Assert.False(enhancedGray.Empty());
+            Assert.Equal(grayMat.Rows, enhancedGray.Rows);
+            Assert.Equal(grayMat.Cols, enhancedGray.Cols);
         }
 
         [Fact]
@@ -162,7 +376,7 @@ namespace AlprTests
                 var result = engine.ProcessFrame(mat);
                 _output.WriteLine($"Sample Car White: Plate='{result.PlateNumber}', Raw='{result.RawPlateText}', Valid={result.IsSuccess}, Conf={result.DetectionConfidence:F1}%");
                 Assert.True(result.IsSuccess);
-                Assert.StartsWith("30A", result.PlateNumber);
+                Assert.Equal("30A12345", result.PlateNumber);
                 Assert.True(result.DetectionConfidence >= 85.0f);
             }
 
@@ -190,6 +404,50 @@ namespace AlprTests
                 {
                     Assert.True(result.DetectionConfidence >= 85.0f);
                 }
+            }
+
+            // Kiểm thử Xe con biển số dài: Ảnh 1 (Hyundai trắng - 21A14746)
+            string testPlate1 = Path.Combine(samplesDir, "test_plate_1.png");
+            if (File.Exists(testPlate1))
+            {
+                using var mat = Cv2.ImRead(testPlate1);
+                var result = engine.ProcessFrame(mat);
+                _output.WriteLine($"Test Plate 1 (Hyundai White): Plate='{result.PlateNumber}', Raw='{result.RawPlateText}', Valid={result.IsSuccess}, Conf={result.DetectionConfidence:F1}%");
+                Assert.True(result.IsSuccess);
+                Assert.Equal("21A14746", result.PlateNumber); // Đúng số đuôi 46 (không bị đọc thành 66)
+            }
+
+            // Kiểm thử Xe con biển số dài: Ảnh 2 (Mitsubishi đỏ trước - 30H30356)
+            string testPlate2 = Path.Combine(samplesDir, "test_plate_2.png");
+            if (File.Exists(testPlate2))
+            {
+                using var mat = Cv2.ImRead(testPlate2);
+                var result = engine.ProcessFrame(mat);
+                _output.WriteLine($"Test Plate 2 (Mitsubishi Red Front): Plate='{result.PlateNumber}', Raw='{result.RawPlateText}', Valid={result.IsSuccess}, Conf={result.DetectionConfidence:F1}%");
+                Assert.True(result.IsSuccess);
+                Assert.Equal("30H30356", result.PlateNumber); // Đúng số đuôi 56 (không bị đọc thành 66)
+            }
+
+            // Kiểm thử Xe con biển số dài: Ảnh 3 (Mitsubishi đỏ sau - 30H30356)
+            string testPlate3 = Path.Combine(samplesDir, "test_plate_3.png");
+            if (File.Exists(testPlate3))
+            {
+                using var mat = Cv2.ImRead(testPlate3);
+                var result = engine.ProcessFrame(mat);
+                _output.WriteLine($"Test Plate 3 (Mitsubishi Red Back): Plate='{result.PlateNumber}', Raw='{result.RawPlateText}', Valid={result.IsSuccess}, Conf={result.DetectionConfidence:F1}%");
+                Assert.True(result.IsSuccess);
+                Assert.Equal("30H30356", result.PlateNumber); // Đúng số đuôi 56 (không bị đọc thành 66)
+            }
+
+            // Kiểm thử Xe con biển số dài: Ảnh Mazda đen - 30K64587
+            string testPlateMazda = Path.Combine(samplesDir, "test_plate_mazda.png");
+            if (File.Exists(testPlateMazda))
+            {
+                using var mat = Cv2.ImRead(testPlateMazda);
+                var result = engine.ProcessFrame(mat);
+                _output.WriteLine($"Test Plate Mazda (Mazda Black): Plate='{result.PlateNumber}', Raw='{result.RawPlateText}', Valid={result.IsSuccess}, Conf={result.DetectionConfidence:F1}%");
+                Assert.True(result.IsSuccess);
+                Assert.Equal("30K64587", result.PlateNumber); // Đúng 30K và đuôi 87 (không bị đọc thành 80K hay 65877)
             }
         }
 

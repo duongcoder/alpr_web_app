@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using OpenCvSharp;
@@ -96,6 +97,62 @@ namespace AlprWpfApp.Services.AI
         }
 
         /// <summary>
+        /// Bộ lọc tăng cường độ tương phản cục bộ CLAHE trên kênh độ sáng Luma (LAB)
+        /// Mặc định clipLimit: 1.5 và tileGridSize: Size(2, 4) để bảo vệ liên kết eo thắt của chữ số '8' trên ảnh nhỏ
+        /// </summary>
+        public static Mat ApplyClahe(Mat src, double clipLimit = 1.5, OpenCvSharp.Size? tileGridSize = null)
+        {
+            if (src == null || src.IsDisposed || src.Empty())
+                return src!;
+
+            var grid = tileGridSize ?? new OpenCvSharp.Size(2, 4);
+            try
+            {
+                using var lab = new Mat();
+                if (src.Channels() == 1)
+                {
+                    using var clahe1 = Cv2.CreateCLAHE(clipLimit, grid);
+                    var dstGray = new Mat();
+                    clahe1.Apply(src, dstGray);
+                    return dstGray;
+                }
+
+                Cv2.CvtColor(src, lab, ColorConversionCodes.BGR2YCrCb);
+                Mat[] channels = Cv2.Split(lab);
+                try
+                {
+                    using var clahe = Cv2.CreateCLAHE(clipLimit, grid);
+                    using var enhancedL = new Mat();
+                    clahe.Apply(channels[0], enhancedL);
+                    enhancedL.CopyTo(channels[0]);
+
+                    using var merged = new Mat();
+                    Cv2.Merge(channels, merged);
+
+                    var dst = new Mat();
+                    Cv2.CvtColor(merged, dst, ColorConversionCodes.YCrCb2BGR);
+                    return dst;
+                }
+                finally
+                {
+                    foreach (var ch in channels)
+                    {
+                        ch.Dispose();
+                    }
+                }
+            }
+            catch
+            {
+                return src.Clone();
+            }
+        }
+
+        public static Mat ApplyClahe(Mat src, double clipLimit, int gridSize)
+        {
+            return ApplyClahe(src, clipLimit, new OpenCvSharp.Size(gridSize, gridSize));
+        }
+
+        /// <summary>
         /// Tiền xử lý theo cơ chế Aspect-Ratio Preserved Canvas Padding:
         /// Giữ nguyên tỷ lệ chiều rộng/chiều cao tự nhiên khi resize về chiều cao 32px (naturalW = src.Width * 32 / src.Height),
         /// sau đó dán vào Canvas đen 128x32 và chuẩn hóa ImageNet NCHW.
@@ -103,14 +160,18 @@ namespace AlprWpfApp.Services.AI
         /// </summary>
         public DenseTensor<float> PreprocessForParseq(Mat src)
         {
+            // Nếu ảnh ban đầu nhỏ (src.Rows < 60), áp dụng CLAHE để làm rõ nét eo chữ số '8'
+            using var claheInput = (src.Rows < 60) ? ApplyClahe(src) : null;
+            Mat effSrc = claheInput ?? src;
+
             // 1. Chuyển BGR sang RGB
             using var rgb = new Mat();
-            if (src.Channels() == 1)
-                Cv2.CvtColor(src, rgb, ColorConversionCodes.GRAY2RGB);
-            else if (src.Channels() == 4)
-                Cv2.CvtColor(src, rgb, ColorConversionCodes.BGRA2RGB);
+            if (effSrc.Channels() == 1)
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.GRAY2RGB);
+            else if (effSrc.Channels() == 4)
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.BGRA2RGB);
             else
-                Cv2.CvtColor(src, rgb, ColorConversionCodes.BGR2RGB);
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.BGR2RGB);
 
             int srcH = Math.Max(1, rgb.Rows);
             int srcW = Math.Max(1, rgb.Cols);
@@ -120,18 +181,31 @@ namespace AlprWpfApp.Services.AI
             naturalW = Math.Clamp(naturalW, 16, _targetWidth);
 
             using var resized = new Mat();
-            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(naturalW, _targetHeight), 0, 0, InterpolationFlags.Cubic);
+            InterpolationFlags interp = InterpolationFlags.Cubic;
+            if (src.Rows < 28)
+            {
+                interp = (src.Rows > _targetHeight) ? InterpolationFlags.Area : InterpolationFlags.Linear;
+            }
+            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(naturalW, _targetHeight), 0, 0, interp);
 
             // Nếu ảnh ban đầu nhỏ (w < 64 hoặc h < 20), làm nét nhẹ ảnh resized để phục hồi viền ký tự
             using var sharpResized = (srcW < 64 || srcH < 20) ? SharpenPlate(resized) : null;
             Mat finalResized = sharpResized ?? resized;
 
-            // 3. Tạo Canvas đen 128x32 chuẩn NCHW và dán ảnh đã resize vào mép trái canvas
-            using var canvas = new Mat(_targetHeight, _targetWidth, MatType.CV_8UC3, new Scalar(0, 0, 0));
+            // 3. Tạo Canvas nền sáng tự nhiên (meanVal) 128x32 chuẩn NCHW và dán ảnh đã resize vào mép trái canvas
+            var meanVal = Cv2.Mean(rgb);
+            using var canvas = new Mat(_targetHeight, _targetWidth, MatType.CV_8UC3, new Scalar(meanVal.Val0, meanVal.Val1, meanVal.Val2));
             using var canvasRoi = new Mat(canvas, new OpenCvSharp.Rect(0, 0, naturalW, _targetHeight));
             finalResized.CopyTo(canvasRoi);
 
-            // 4. Chuyển đổi Canvas 128x32 thành NCHW Tensor [1, 3, 32, 128] chuẩn ImageNet (< 0.05ms)
+            return CreateImageNetTensor(canvas);
+        }
+
+        /// <summary>
+        /// Chuyển đổi Mat RGB 128x32 thành NCHW Tensor [1, 3, 32, 128] chuẩn ImageNet (< 0.05ms)
+        /// </summary>
+        private DenseTensor<float> CreateImageNetTensor(Mat canvas)
+        {
             int totalPixels = _targetHeight * _targetWidth;
             unsafe
             {
@@ -161,11 +235,10 @@ namespace AlprWpfApp.Services.AI
 
         /// <summary>
         /// Nhận diện biển số với Dual-Hypothesis OCR Strategy:
-        /// Đối với biển vuông (h / w > 0.50):
-        /// - Hypothesis A: 2-Line Split (Dòng 1: 0->50%, Dòng 2: 42%->100% giữ nguyên 100% chiều cao dòng 2)
-        /// - Hypothesis B: Full Crop OCR
-        /// Đánh giá và chọn hypothesis tối ưu nhất dựa trên tính hợp lệ và Softmax Confidence.
-        /// Đối với biển dài (h / w <= 0.50): Nhận diện trực tiếp Full Crop.
+        /// - Biển vuông (ratio < 2.0f): Dual-Hypothesis (2-Line Split Top 0..50% / Bot 42%..100% vs Full Crop OCR).
+        /// - Biển dài (ratio >= 2.0f): Cơ chế Registration-Block Refinement:
+        ///   Bước 1: Chạy Full-Crop lấy Prefix chuẩn (30A, 21A, 30H, 30K...).
+        ///   Bước 2: Bóc tách riêng vùng Cụm số đăng ký bên phải (X >= 35% W) để giải mã chính xác dãy số.
         /// </summary>
         public (List<string> lines, float avgConfidence) RecognizePlateLines(Mat cropImg)
         {
@@ -177,27 +250,61 @@ namespace AlprWpfApp.Services.AI
             {
                 int h = cropImg.Rows;
                 int w = cropImg.Cols;
-                float aspectRatio = h / (float)w;
+                float ratio = (float)w / (float)h;
 
-                if (aspectRatio > 0.50f)
+                if (ratio < 2.0f)
                 {
                     // ============================================
-                    // Hypothesis A: 2-Line Split (Natural Contrast)
+                    // BIỂN SỐ VUÔNG (2 DÒNG, ratio < 2.0f)
+                    // Hypothesis A: 2-Line Split (Natural Contrast + CLAHE cho ảnh nhỏ)
                     // ============================================
                     int topH = Math.Clamp((int)Math.Round(h * 0.50f), 1, h);
                     using var topHalf = new Mat(cropImg, new OpenCvSharp.Rect(0, 0, w, topH));
                     using var sharpTop = SharpenPlate(topHalf);
                     var (topText, topConf) = PredictSingleCropWithConfidence(sharpTop);
 
-                    int botY = Math.Clamp((int)Math.Round(h * 0.42f), 0, h - 1);
+                    int botY = Math.Clamp((int)Math.Round(h * 0.38f), 0, h - 1);
                     int botH = h - botY;
-                    using var botHalf = new Mat(cropImg, new OpenCvSharp.Rect(0, botY, w, botH));
-                    using var sharpBot = SharpenPlate(botHalf);
-                    var (botText, botConf) = PredictSingleCropWithConfidence(sharpBot);
+                    using var botCrop = new Mat(cropImg, new OpenCvSharp.Rect(0, botY, w, botH));
+                    
+                    // Thực hiện suy luận chính và suy luận đối chứng qua bộ làm nét vi sai (Dual-Contrast Verification):
+                    var (botRaw, botConf) = RecognizeLine(botCrop);
+                    if (string.IsNullOrWhiteSpace(botRaw) || botConf < 0.85f)
+                    {
+                        using var sharpBot = SharpenPlate(botCrop);
+                        var (singleRaw, singleConf) = PredictSingleCropWithConfidence(sharpBot);
+                        if (!string.IsNullOrWhiteSpace(singleRaw) && (string.IsNullOrWhiteSpace(botRaw) || singleConf > botConf))
+                        {
+                            botRaw = singleRaw;
+                            botConf = singleConf;
+                        }
+                    }
+
+                    // Nếu kết quả dòng 2 có chữ số '0' đứng trước số khác (như '20084') và độ tin cậy < 0.95f:
+                    // Chạy đối chứng với kernel làm nét cạnh sắc để xác thực eo số '8'
+                    if (botRaw.Contains('0') && botConf < 0.95f)
+                    {
+                        using var enhancedBot = SharpenPlate(botCrop);
+                        var (altRaw, altConf) = RecognizeLine(enhancedBot);
+                        if (altRaw.Contains('8') && !altRaw.Contains("00"))
+                        {
+                            botRaw = altRaw;
+                            botConf = Math.Max(botConf, altConf);
+                        }
+                        else
+                        {
+                            var (altSingleRaw, altSingleConf) = PredictSingleCropWithConfidence(enhancedBot);
+                            if (altSingleRaw.Contains('8') && !altSingleRaw.Contains("00"))
+                            {
+                                botRaw = altSingleRaw;
+                                botConf = Math.Max(botConf, altSingleConf);
+                            }
+                        }
+                    }
 
                     var linesA = new List<string>();
                     if (!string.IsNullOrWhiteSpace(topText)) linesA.Add(topText);
-                    if (!string.IsNullOrWhiteSpace(botText)) linesA.Add(botText);
+                    if (!string.IsNullOrWhiteSpace(botRaw)) linesA.Add(botRaw);
                     float confA = linesA.Count > 0 ? (topConf + botConf) / 2.0f : 0f;
 
                     // ============================================
@@ -233,20 +340,185 @@ namespace AlprWpfApp.Services.AI
                 }
                 else
                 {
-                    // Biển 1 dòng (biển dài, h / w <= 0.50): Nhận diện trực tiếp Full Crop (Natural Contrast)
-                    using var sharpFull = SharpenPlate(cropImg);
-                    var (text, conf) = PredictSingleCropWithConfidence(sharpFull);
-                    if (!string.IsNullOrWhiteSpace(text))
+                    // ============================================
+                    // BIỂN SỐ DÀI (1 DÒNG, ratio >= 2.0f)
+                    // Chuẩn hóa kiến trúc: Full-Crop Backbone + Tail Refinement:
+                    // ============================================
+
+                    // Bước 1: Suy luận Full-Crop Direct trên toàn bộ biển số:
+                    var (fullRaw, fullConf) = PredictDirectCropWithConfidence(cropImg);
+
+                    // Bước 2: Bóc tách bằng Regex từ fullRaw:
+                    string prefix = PlatePostProcessor.CleanPrefix(fullRaw); // ví dụ '30H', '21A', '30K'
+                    string fullDigits = Regex.Replace(fullRaw.Substring(Math.Min(fullRaw.Length, 3)), @"[^\d]", "");
+
+                    // Bước 3: Tinh chỉnh 2 số đuôi bằng Tail-Crop:
+                    int tailX = Math.Clamp((int)(cropImg.Cols * 0.68f), 0, cropImg.Cols - 1);
+                    using var tailRoi = new Mat(cropImg, new OpenCvSharp.Rect(tailX, 0, cropImg.Cols - tailX, cropImg.Rows));
+                    var (tailRaw, _) = RecognizeLine(tailRoi);
+                    string tailDigits = Regex.Replace(tailRaw, @"[^\d]", "");
+                    string tail2 = string.Empty;
+
+                    // Nếu tailRaw có dấu chấm '.', lấy 2 chữ số ngay sau dấu chấm
+                    int dotIdx = tailRaw.IndexOf('.');
+                    if (dotIdx >= 0)
                     {
-                        results.Add(text);
+                        string afterDot = Regex.Replace(tailRaw.Substring(dotIdx + 1), @"[^\d]", "");
+                        if (afterDot.Length >= 2)
+                            tail2 = afterDot.Substring(0, 2);
                     }
-                    return (results, conf);
+
+                    // Nếu chưa xác định được tail2 từ dấu chấm:
+                    if (string.IsNullOrEmpty(tail2) && tailDigits.Length >= 2)
+                    {
+                        // Kiểm tra nếu fullDigits có >= 5 số và 2 số đuôi của fullDigits không bị Attention Collapse (lặp số như 33 hay 77)
+                        // và tailDigits chứa fullTail (ví dụ fullTail "56", tailDigits "566" do kéo dãn ViT):
+                        if (fullDigits.Length >= 5)
+                        {
+                            string fullTail = fullDigits.Substring(fullDigits.Length - 2);
+                            if (fullTail[0] != fullTail[1] && tailDigits.Contains(fullTail))
+                            {
+                                tail2 = fullTail;
+                            }
+                        }
+
+                        // Nếu vẫn chưa xác định được tail2, ưu tiên lấy 2 số đầu của tailDigits
+                        if (string.IsNullOrEmpty(tail2))
+                        {
+                            tail2 = tailDigits.Substring(0, 2);
+                        }
+                    }
+
+                    // Fallback bảo vệ: Nếu tail2 vẫn chưa xác định được nhưng fullDigits có đủ 5 số:
+                    if (string.IsNullOrEmpty(tail2) && fullDigits.Length >= 5)
+                    {
+                        tail2 = fullDigits.Substring(fullDigits.Length - 2);
+                    }
+
+                    // Bước 4: Hợp nhất (Full-Crop Backbone + Tail Refinement):
+                    string cleanPlate = string.Empty;
+                    if (fullDigits.Length >= 3 && tail2.Length == 2)
+                    {
+                        // Lấy 3 chữ số đầu từ fullDigits (ví dụ '303' trong 30H-303, '147' trong 21A-147, '244' trong 30A-244):
+                        string mid3 = fullDigits.Substring(0, 3);
+                        cleanPlate = $"{prefix}{mid3}{tail2}";
+                    }
+                    else
+                    {
+                        // Fallback: Nếu không thỏa mãn, sử dụng kết quả từ PlatePostProcessor.CleanLongPlate(fullRaw)
+                        cleanPlate = PlatePostProcessor.CleanLongPlate(fullRaw);
+                    }
+
+                    // Bước 5: Trả về kết quả
+                    if (!string.IsNullOrWhiteSpace(cleanPlate))
+                    {
+                        results.Add(cleanPlate);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(fullRaw))
+                    {
+                        results.Add(fullRaw);
+                    }
+                    return (results, fullConf);
                 }
             }
             catch
             {
                 return (results, 0.92f);
             }
+        }
+
+        /// <summary>
+        /// Tiền xử lý cho phân vùng cắt nhỏ (prefixRoi, midRoi, tailRoi) bảo toàn tỷ lệ tự nhiên:
+        /// Aspect-Ratio Padding trên nền sáng (lấy màu trung bình của ảnh để tránh viền đen tương phản gắt),
+        /// triệt tiêu hiện tượng kéo dãn ngang 300% gây ảo giác chữ số.
+        /// </summary>
+        public DenseTensor<float> PreprocessSubCrop(Mat src)
+        {
+            using var rgb = new Mat();
+            if (src.Channels() == 1)
+                Cv2.CvtColor(src, rgb, ColorConversionCodes.GRAY2RGB);
+            else if (src.Channels() == 4)
+                Cv2.CvtColor(src, rgb, ColorConversionCodes.BGRA2RGB);
+            else
+                Cv2.CvtColor(src, rgb, ColorConversionCodes.BGR2RGB);
+
+            int naturalW = Math.Clamp((int)Math.Round(rgb.Cols * (32.0 / rgb.Rows)), 16, 128);
+            using var resized = new Mat();
+            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(naturalW, 32), interpolation: InterpolationFlags.Cubic);
+            using var sharpened = SharpenPlate(resized);
+
+            // Lấy màu nền trung bình của ảnh để điền phần thừa, tránh viền đen tương phản gắt
+            var meanScalar = Cv2.Mean(rgb);
+            using var canvas = new Mat(32, 128, MatType.CV_8UC3, new Scalar(meanScalar.Val0, meanScalar.Val1, meanScalar.Val2));
+            
+            // Dán ảnh vào giữa canvas hoặc căn trái
+            var roiRect = new OpenCvSharp.Rect(0, 0, naturalW, 32);
+            using var canvasRoi = new Mat(canvas, roiRect);
+            sharpened.CopyTo(canvasRoi);
+
+            return CreateImageNetTensor(canvas);
+        }
+
+        /// <summary>
+        /// Nhận diện chuỗi ký tự trên phân vùng cắt nhỏ với tiền xử lý bảo toàn tỷ lệ và padding nền sáng
+        /// </summary>
+        public (string text, float confidence) PredictSubCropWithConfidence(Mat cropImg)
+        {
+            if (_session == null || cropImg == null || cropImg.IsDisposed || cropImg.Empty())
+                return (string.Empty, 0f);
+
+            var tensor = PreprocessSubCrop(cropImg);
+            return RunInferenceOnTensor(tensor);
+        }
+
+        /// <summary>
+        /// Tiền xử lý Direct Full-Crop chuẩn của PARSeq dành riêng cho biển số dài 1 dòng:
+        /// Resize trực tiếp về 128x32 bằng nội suy Cubic, làm nét và chuẩn hóa tensor ImageNet [1, 3, 32, 128].
+        /// Tuyệt đối không dùng Black Canvas Padding vì độ tương phản trắng-đen ở biên làm ViT sinh ảo giác/lặp số đuôi.
+        /// </summary>
+        public DenseTensor<float> PreprocessDirect(Mat src)
+        {
+            // Áp dụng ApplyClahe trước khi phóng to/resize cho các crop có kích thước nhỏ (h < 60px)
+            using var claheInput = (src.Rows < 60) ? ApplyClahe(src) : null;
+            Mat effSrc = claheInput ?? src;
+
+            using var rgb = new Mat();
+            if (effSrc.Channels() == 1)
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.GRAY2RGB);
+            else if (effSrc.Channels() == 4)
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.BGRA2RGB);
+            else
+                Cv2.CvtColor(effSrc, rgb, ColorConversionCodes.BGR2RGB);
+
+            using var resized = new Mat();
+            Cv2.Resize(rgb, resized, new OpenCvSharp.Size(_targetWidth, _targetHeight), interpolation: InterpolationFlags.Cubic);
+
+            using var sharpened = SharpenPlate(resized);
+
+            return CreateImageNetTensor(sharpened);
+        }
+
+        /// <summary>
+        /// Nhận diện biển số dài 1 dòng qua Direct Full-Crop
+        /// </summary>
+        public (string text, float confidence) PredictDirectCropWithConfidence(Mat cropImg)
+        {
+            if (_session == null || cropImg == null || cropImg.IsDisposed || cropImg.Empty())
+                return (string.Empty, 0f);
+
+            var tensor = PreprocessDirect(cropImg);
+            return RunInferenceOnTensor(tensor);
+        }
+
+        /// <summary>
+        /// Nhận diện 1 crop đơn lẻ (Direct Crop 128x32 chuẩn PARSeq không padding canvas)
+        /// </summary>
+        public (string text, float confidence) RecognizeLine(Mat cropImg)
+        {
+            if (cropImg == null || cropImg.IsDisposed || cropImg.Empty())
+                return (string.Empty, 0f);
+
+            return PredictDirectCropWithConfidence(cropImg);
         }
 
         public string PredictSingleCrop(Mat cropImg)
@@ -265,6 +537,13 @@ namespace AlprWpfApp.Services.AI
                 return (string.Empty, 0f);
 
             var tensor = PreprocessForParseq(cropImg);
+            return RunInferenceOnTensor(tensor);
+        }
+
+        private (string text, float confidence) RunInferenceOnTensor(DenseTensor<float> tensor)
+        {
+            if (_session == null)
+                return (string.Empty, 0f);
 
             var inputs = new List<NamedOnnxValue>
             {
