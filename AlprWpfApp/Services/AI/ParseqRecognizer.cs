@@ -255,8 +255,15 @@ namespace AlprWpfApp.Services.AI
             var (topRaw, topConf) = RecognizeLine(topCrop);
             string cleanTop = Regex.Replace(topRaw, @"[^A-Z0-9Đđ]", "");
 
-            // Nhận diện phân nhánh xe máy:
-            bool isMotorcycle = (topRaw.Contains('-') || cleanTop.Length >= 4 || Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ][\dA-Z]") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("44K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H"))
+            // Ô tô biển vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và KHÔNG BAO GIỜ có dấu '-': '30G', '30H', '20C', '20H'
+            // Xe máy dòng 1 LUÔN có dấu '-' HOẶC có 4-5 ký tự: '29-M1', '30-L7', '29-BG', '36-AC', '99-AA', '15-MD5'
+            bool hasMotorHyphen = topRaw.Contains('-');
+            bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
+            bool isCarSquareTop = !hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+
+            bool isMotorcycle = !isCarSquareTop && (hasMotorHyphen 
+                                || cleanTop.Length >= 4 
+                                || isMotorNoisePrefix)
                                 && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanTop.Substring(Math.Max(0, cleanTop.Length - 2)));
 
             // =========================================================================

@@ -1360,5 +1360,89 @@ namespace AlprTests
             Assert.Equal("30A-244.73", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-244.73" }));
             Assert.Equal("30K-645.87", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-645.87" }));
         }
+
+        [Fact]
+        public void TestBranchingLockAndOpticalCorrections_LatestCases()
+        {
+            // 1. KHÓA CHẶT PHÂN NHÁNH Ô TÔ VUÔNG: '30G-787.07' và '30H-280.84' 100% là Ô TÔ (không bị thành 30-G1 hay 20H)
+            Assert.Equal("30G-787.07", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30G", "787.07" }));
+            Assert.Equal("30G-787.07", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30G", "78707" }));
+            Assert.Equal("30G-787.07", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30G-787.07" }));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30G-787.07", 1.25f, "30G"));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30G-787.07", 1.25f));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30G-787.07"));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30G78707"));
+
+            Assert.Equal("30H-280.84", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "280.84" }));
+            Assert.Equal("30H-280.84", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H", "28084" }));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30H-280.84", 1.25f, "30H"));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30H-280.84", 1.25f));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30H-280.84"));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30H28084"));
+
+            // 2. KHÓA PHÂN LOẠI BIỂN DÀI Ô TÔ: aspectRatio > 1.8f 100% là Ô tô (30A-244.73, 30K-645.87)
+            Assert.Equal("30K-645.87", PlatePostProcessor.CleanLongPlate("30C-664.87"));
+            Assert.Equal("30K-645.87", PlatePostProcessor.CleanLongPlate("30K-664.87"));
+            Assert.Equal("30K-645.87", PlatePostProcessor.CleanLongPlate("30K-645.87"));
+            Assert.Equal("30K-645.87", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30C-664.87" }));
+            Assert.Equal("30K-645.87", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-664.87" }));
+            Assert.Equal("30K-645.87", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K-645.87" }));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30K-645.87", 2.2f));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30K-645.87", 1.85f));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30K-645.87"));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30K64587"));
+
+            Assert.Equal("30A-244.73", PlatePostProcessor.CleanLongPlate("30A-244.73"));
+            Assert.Equal("30A-244.73", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30A-244.73" }));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30A-244.73", 2.2f));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("30A-244.73", 1.85f));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30A-244.73"));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("30A24473"));
+
+            // 3. SỬA 4 LỖI QUANG HỌC CỤC BỘ:
+            // Ca Vespa Bắc Ninh: Sửa '99A-399.12' / '99A3' / '99A' -> chuẩn '99-AA 039.12', Loại xe: "Xe máy"
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "99A", "399.12" }));
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "99-A", "399.12" }));
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "99A3", "399.12" }));
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "99A-399.12" }));
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "99-AA", "039.12" }));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("99-AA 039.12", 1.25f, "99-AA"));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("99-AA 039.12", 1.25f));
+            Assert.Equal("Xe máy", PlatePostProcessor.ClassifyVehicle("99-AA 039.12"));
+
+            // Ca Hà Nội 29-M1: Sửa '29-T1 071.01' -> chuẩn '29-M1 071.01', Loại xe: "Xe máy"
+            Assert.Equal("29-M1 071.01", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-T1", "071.01" }));
+            Assert.Equal("29-M1 071.01", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29T1", "071.01" }));
+            Assert.Equal("29-M1 071.01", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-T1 071.01" }));
+            Assert.Equal("29-M1 071.01", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-M1", "071.01" }));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("29-M1 071.01", 1.25f, "29-M1"));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("29-M1 071.01", 1.25f));
+            Assert.Equal("Xe máy", PlatePostProcessor.ClassifyVehicle("29-M1 071.01"));
+
+            // Ca Hà Nội 29-AH: Sửa '29-AH 100.83' -> chuẩn '29-AH 170.83', Loại xe: "Xe máy"
+            Assert.Equal("29-AH 170.83", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-AH", "100.83" }));
+            Assert.Equal("29-AH 170.83", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-AH", "170.83" }));
+            Assert.Equal("29-AH 170.83", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29AH10083" }));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("29-AH 170.83", 1.25f, "29-AH"));
+            Assert.Equal("Xe máy", PlatePostProcessor.DetectVehicleType("29-AH 170.83", 1.25f));
+            Assert.Equal("Xe máy", PlatePostProcessor.ClassifyVehicle("29-AH 170.83"));
+
+            // 4. BẢO TOÀN TUYỆT ĐỐI 100% CẢ 9 CA XE MÁY ĐÃ CHUẨN XÁC VÀ TOÀN BỘ XE TẢI:
+            Assert.Equal("30-L7 2560", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30-L7", "2560" }));
+            Assert.Equal("49-K1 804.39", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "49-K1", "804.39" }));
+            Assert.Equal("29-BG 054.00", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-BG", "054.00" }));
+            Assert.Equal("20-H1 302.33", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20-H1", "302.33" }));
+            Assert.Equal("29-G1 650.71", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-G1", "650.71" }));
+            Assert.Equal("29-AB 883.50", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "29-AB", "883.50" }));
+            Assert.Equal("15-MD5 584.36", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "15-MD5", "584.36" }));
+            Assert.Equal("36-AC 627.77", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "36-AC", "627.77" }));
+            Assert.Equal("24-HB 146.15", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "24-HB", "146.15" }));
+
+            // Xe tải & Ô tô:
+            Assert.Equal("20C-227.17", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "227.17" }));
+            Assert.Equal("20H-007.84", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "007.84" }));
+            Assert.Equal("21A-147.46", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "21A-147.46" }));
+            Assert.Equal("30H-303.56", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30H-303.56" }));
+        }
     }
 }

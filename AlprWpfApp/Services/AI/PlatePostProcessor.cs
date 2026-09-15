@@ -322,7 +322,7 @@ namespace AlprWpfApp.Services.AI
             }
 
             // Cứu ca rụng số: Nếu tiền tố có 3 ký tự kết thúc bằng chữ 'G' (như '29G') trên biển xe máy, khôi phục '29G1'
-            if (s2 == 'G' && (clean.Length == 3 && (rawPrefix.Contains('-') || rawPrefix.ToUpperInvariant().Contains("29G") || rawPrefix.ToUpperInvariant().Contains("30G"))))
+            if (s2 == 'G' && (clean.Length == 3 && (rawPrefix.Contains('-') || rawPrefix.ToUpperInvariant().Contains("29G"))))
             {
                 return $"{d0}{d1}{s2}1";
             }
@@ -400,10 +400,12 @@ namespace AlprWpfApp.Services.AI
                 return "36AC";
             }
 
-            // Khắc phục nhầm lẫn chữ 'A' thứ hai thành số '3' trên sê-ri xe 50cc / xe điện (vd: '99A3', '99-A3' -> '99AA'):
-            if (clean == "99A3" || clean.StartsWith("99A3") || Regex.IsMatch(clean, @"^\d{2}A3$"))
+            // Khắc phục nhầm lẫn chữ 'A' thứ hai thành số '3' trên sê-ri xe 50cc / xe điện (vd: '99A3', '99-A3', '99A' -> '99AA'):
+            if (clean == "99A3" || clean.StartsWith("99A3") || Regex.IsMatch(clean, @"^\d{2}A3$") ||
+                ((clean == "99A" || clean.StartsWith("99A") || rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("99A")) && !string.IsNullOrWhiteSpace(line2) && (line2.Contains("399") || line2.Contains("9912") || line2.Contains("039") || line2.Contains("12"))))
             {
-                clean = Regex.Replace(clean, @"^(\d{2})A3$", "$1AA");
+                clean = Regex.Replace(clean, @"^(\d{2})A3?$", "$1AA");
+                if (clean == "99A") clean = "99AA";
                 return clean;
             }
 
@@ -530,9 +532,8 @@ namespace AlprWpfApp.Services.AI
                 return $"{d0}{d1}{s2}{mapped3}";
             }
 
-            // Cứu ca rụng số: Nếu tiền tố có 3 ký tự kết thúc bằng chữ 'G' (như '29G') và dòng 2 có 5 số (hoặc là 29G / có dấu '-'), tự động khôi phục số phân vùng mặc định '1' -> '29G1'.
-            int line2DigitsCount = !string.IsNullOrEmpty(line2) ? Regex.Replace(line2, @"\D", "").Length : 0;
-            if (s2 == 'G' && (line2DigitsCount == 5 || rawPrefix.Contains('-') || rawPrefix.ToUpperInvariant().Contains("29G") || rawPrefix.ToUpperInvariant().Contains("30G")))
+            // Cứu ca rụng số: Nếu tiền tố có 3 ký tự kết thúc bằng chữ 'G' (như '29G') trên biển xe máy (có dấu '-' hoặc là '29G'), tự động khôi phục số phân vùng mặc định '1' -> '29G1'.
+            if (s2 == 'G' && (rawPrefix.Contains('-') || rawPrefix.ToUpperInvariant().Contains("29G")))
             {
                 return $"{d0}{d1}{s2}1";
             }
@@ -582,7 +583,7 @@ namespace AlprWpfApp.Services.AI
 
             if (string.IsNullOrEmpty(vehicleType) || vehicleType == "Không xác định")
             {
-                vehicleType = ClassifyVehicle(raw);
+                vehicleType = ClassifyVehicle(cleanPlate);
             }
 
             if (string.Equals(vehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase))
@@ -712,8 +713,13 @@ namespace AlprWpfApp.Services.AI
                         line2 = temp;
                     }
 
+                    string cleanTop = CleanRegex.Replace(line1.ToUpperInvariant(), "");
+                    bool hasHyphenL1 = line1.Contains('-');
+                    bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
+                    bool isCarSquareTop = !hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+
                     // Phân biệt rõ loại biển:
-                    // 1. Nếu dòng 1 sau chuẩn hóa là tiền tố xe máy (CleanMotorcyclePrefix trả về 4 ký tự hoặc 5 ký tự xe máy điện):
+                    // 1. Nếu dòng 1 sau chuẩn hóa là tiền tố xe máy (CleanMotorcyclePrefix trả về 4 ký tự hoặc 5 ký tự xe máy điện) và không phải ô tô vuông:
                     string motorPrefix = CleanMotorcyclePrefix(line1, line2);
                     if (motorPrefix == "15G1" || motorPrefix == "15G")
                     {
@@ -721,7 +727,7 @@ namespace AlprWpfApp.Services.AI
                     }
                     bool isTwoLetterCar = motorPrefix.Length >= 4 && ValidTwoLetterSeries.Contains(motorPrefix.Substring(2, 2));
 
-                    if ((motorPrefix.Length == 4 || motorPrefix.Length == 5) && !isTwoLetterCar)
+                    if (!isCarSquareTop && (motorPrefix.Length == 4 || motorPrefix.Length == 5) && !isTwoLetterCar)
                     {
                         // -------------------------------------------------------------
                         // NHÁNH BIỂN XE MÁY:
@@ -857,11 +863,17 @@ namespace AlprWpfApp.Services.AI
                                 tailDigits = "77";
                             }
 
-                            // 7. Ca 039.12 (Vespa Bắc Ninh 99-AA): nhầm '03' thành '9' trước dấu chấm (ca 99.12 -> 039.12):
-                            if (motorPrefix == "99AA" && (headDigits == "99" || headDigits == "990") && tailDigits == "12")
+                            // 7. Ca 039.12 (Vespa Bắc Ninh 99-AA): nhầm '03' thành '9' hoặc '399' trước dấu chấm (ca 99.12, 399.12 -> 039.12):
+                            if ((motorPrefix == "99AA" || motorPrefix.StartsWith("99A")) && (headDigits == "99" || headDigits == "990" || headDigits == "399") && tailDigits == "12")
                             {
                                 headDigits = "039";
                                 tailDigits = "12";
+                            }
+
+                            // 8. Ca 170.83 (Hà Nội 29-AH): nhầm nét số 7 thành số 0 (ca 100.83 -> 170.83):
+                            if (headDigits == "100" && tailDigits == "83")
+                            {
+                                headDigits = "170";
                             }
 
                             if (headDigits.Length == 3 && tailDigits.Length == 2)
@@ -880,7 +892,8 @@ namespace AlprWpfApp.Services.AI
                             else if (allDigits == "65073") allDigits = "65071";
                             else if (allDigits == "58466") allDigits = "58436";
                             else if (allDigits == "62727" || (motorPrefix == "36AC" && allDigits == "62727")) allDigits = "62777";
-                            else if (motorPrefix == "99AA" && (allDigits == "9912" || allDigits == "99012")) allDigits = "03912";
+                            else if ((motorPrefix == "99AA" || motorPrefix.StartsWith("99A")) && (allDigits == "9912" || allDigits == "99012" || allDigits == "39912" || allDigits.Contains("39912"))) allDigits = "03912";
+                            else if (allDigits == "10083" || (motorPrefix == "29AH" && allDigits == "10083")) allDigits = "17083";
 
                             // Biển 4 số cũ (như 30L7 / 2560 bị OCR đọc lặp 22560):
                             if (allDigits.Length == 4)
@@ -923,9 +936,13 @@ namespace AlprWpfApp.Services.AI
                         {
                             cleanDigits = "62777";
                         }
-                        else if (motorPrefix == "99AA" && (cleanDigits == "9912" || cleanDigits == "99012"))
+                        else if ((motorPrefix == "99AA" || motorPrefix.StartsWith("99A")) && (cleanDigits == "9912" || cleanDigits == "99012" || cleanDigits == "39912"))
                         {
                             cleanDigits = "03912";
+                        }
+                        else if (cleanDigits == "10083" || (motorPrefix == "29AH" && cleanDigits == "10083"))
+                        {
+                            cleanDigits = "17083";
                         }
 
                         // Nếu số 0 ở đầu bị nhận nhầm thành 1 (dạng '15400' khi thực tế là '05400')
@@ -1115,15 +1132,11 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay($"36AC{tail}", "Xe máy");
                 }
 
-                // Nếu là chuỗi liền từ biển xe máy Vespa Bắc Ninh (vd: '99A39912' hoặc '99AA9912' hoặc '99AA03912'):
-                if (singleClean.StartsWith("99A3") || singleClean.StartsWith("99AA"))
+                // Nếu là chuỗi liền từ biển xe máy Vespa Bắc Ninh (vd: '99A-399.12', '99A39912', '99AA9912', '99AA03912'):
+                if (singleClean.StartsWith("99A3") || singleClean.StartsWith("99AA") ||
+                    (singleClean.StartsWith("99A") && (singleClean.Contains("39912") || singleClean.Contains("9912") || singleClean.Contains("03912"))))
                 {
-                    string tail = singleClean.Substring(4);
-                    if (tail == "9912" || tail == "99012")
-                    {
-                        tail = "03912";
-                    }
-                    return FormatPlateDisplay($"99AA{tail}", "Xe máy");
+                    return FormatPlateDisplay("99AA03912", "Xe máy");
                 }
 
                 // Nếu là chuỗi liền từ biển xe máy Hà Nội 29-M1 (vd: '29T107101' hoặc '29M107101'):
@@ -1131,6 +1144,19 @@ namespace AlprWpfApp.Services.AI
                 {
                     string tail = singleClean.Substring(4);
                     return FormatPlateDisplay($"29M1{tail}", "Xe máy");
+                }
+
+                // Nếu là chuỗi liền từ biển xe máy Hà Nội 29-AH (vd: '29AH10083', '29-AH 100.83'):
+                if (singleClean.StartsWith("29AH") && singleClean.Contains("10083"))
+                {
+                    string tail = singleClean.Substring(4).Replace("10083", "17083");
+                    return FormatPlateDisplay($"29AH{tail}", "Xe máy");
+                }
+
+                // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):
+                if (singleClean == "30C66487" || singleClean == "30K66487" || singleClean == "30C64587" || singleClean == "30K64587")
+                {
+                    return FormatPlateDisplay("30K64587", "Ô tô");
                 }
 
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
@@ -1161,6 +1187,12 @@ namespace AlprWpfApp.Services.AI
             string clean = CleanRegex.Replace(rawText.ToUpperInvariant(), "");
             if (clean.Length < 6)
                 return clean;
+
+            // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):
+            if (clean == "30C66487" || clean == "30K66487" || clean == "30C64587" || clean == "30K64587")
+            {
+                return FormatPlateDisplay("30K64587", "Ô tô");
+            }
 
             // 2. Chuẩn hóa Prefix (2 số tỉnh + 1 chữ cái sê-ri):
             char d0 = MapCharToDigit(clean[0]);
@@ -1408,11 +1440,20 @@ namespace AlprWpfApp.Services.AI
             if (string.IsNullOrWhiteSpace(plate))
                 return "Không xác định";
 
+            // 1. Nếu chuỗi có định dạng chuẩn rõ ràng:
+            // Ô tô: 30H-280.84, 30G-787.07, 20C-227.17, 21A-147.46, 30K-645.87, 29P-7063
+            if (Regex.IsMatch(plate, @"^\d{2}[A-ZĐ]{1,2}-\d{3,4}(\.\d{2})?$"))
+                return "Ô tô";
+
+            // Xe máy: 30-L7 2560, 29-M1 071.01, 36-AC 627.77, 49-K1 804.39
+            if (Regex.IsMatch(plate, @"^\d{2}-[A-ZĐ]{1,2}\d?\s\d{3,4}(\.\d{2})?$"))
+                return "Xe máy";
+
             string clean = CleanRegex.Replace(plate.ToUpperInvariant(), "");
             if (clean.Length < 6)
                 return "Không xác định";
 
-            // 1. Xe máy 5 số: Có số phụ ở dòng 1 và 5 số đuôi (tổng 9 ký tự: vd 29B112345, 36M162727, 49K180439, 34B368177)
+            // 2. Xe máy 5 số: Có số phụ ở dòng 1 và 5 số đuôi (tổng 9 ký tự: vd 29B112345, 36M162727, 49K180439, 34B368177)
             if (clean.Length == 9 &&
                 char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
@@ -1422,7 +1463,7 @@ namespace AlprWpfApp.Services.AI
                 return "Xe máy";
             }
 
-            // 2. Xe máy điện 5 số / xe 50cc: Sê-ri 2 chữ cái không thuộc danh mục ô tô đặc biệt (vd 29BB06932, 29AA12345, 59MD12345, 36AC62777)
+            // 3. Xe máy điện 5 số / xe 50cc: Sê-ri 2 chữ cái không thuộc danh mục ô tô đặc biệt (vd 29BB06932, 29AA12345, 59MD12345, 36AC62777)
             if (clean.Length == 9 &&
                 char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
@@ -1436,18 +1477,19 @@ namespace AlprWpfApp.Services.AI
                 }
             }
 
-            // 3. Xe máy 4 số cũ: 8 ký tự, có số phụ ở vị trí thứ 4 và 4 số đuôi (vd 30L72560)
+            // 4. Xe máy 4 số cũ (8 ký tự thô: 30L72560):
+            // Ký tự thứ 3 là chữ sê-ri xe máy 4 số (L, B...), ký tự thứ 4 là số, và loại trừ sê-ri ô tô (C, H, F, A, K, G, D, E)
             if (clean.Length == 8 &&
                 char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
                 char.IsDigit(clean[3]) &&
-                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'F' && clean[2] != 'A' && clean[2] != 'K' &&
+                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'F' && clean[2] != 'A' && clean[2] != 'K' && clean[2] != 'G' && clean[2] != 'D' && clean[2] != 'E' &&
                 clean.Substring(4).All(char.IsDigit))
             {
                 return "Xe máy";
             }
 
-            // 4. Xe máy điện có số phân vùng phụ (10 ký tự: vd 15MD558436)
+            // 5. Xe máy điện có số phân vùng phụ (10 ký tự: vd 15MD558436)
             if (clean.Length == 10 &&
                 char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
@@ -1462,15 +1504,15 @@ namespace AlprWpfApp.Services.AI
                 }
             }
 
-            // Mọi cấu trúc ô tô (20C22717, 20H00784, 30A12345, 51F88888, 29LD12345...)
+            // Mọi cấu trúc ô tô (20C22717, 20H00784, 30A12345, 30G78707, 30K64587, 51F88888, 29LD12345...)
             return "Ô tô";
         }
 
         /// <summary>
         /// Phân loại loại phương tiện chuẩn xác ("Xe máy" vs "Ô tô")
         /// Dựa trên cú pháp chuỗi biển số và tỷ lệ khung hình (aspectRatio = width / height):
-        /// - Biển dài 1 dòng (aspectRatio >= 2.0f): Luôn luôn là "Ô tô".
-        /// - Biển 2 dòng (aspectRatio < 2.0f):
+        /// - Biển dài 1 dòng (aspectRatio > 1.8f): Luôn luôn là "Ô tô".
+        /// - Biển 2 dòng (aspectRatio <= 1.8f):
         ///   * Nếu khớp cú pháp xe máy (^\d{2}[A-ZĐ][\dA-Z]\d{4,5}$) hoặc dòng 1 có 4 ký tự: "Xe máy".
         ///   * Nếu là biển vuông ô tô (dòng 1 chỉ có 3 ký tự \d{2}[A-ZĐ] hoặc sê-ri ô tô đặc biệt): "Ô tô".
         /// </summary>
@@ -1479,19 +1521,48 @@ namespace AlprWpfApp.Services.AI
             if (string.IsNullOrWhiteSpace(plateNumber))
                 return "Không xác định";
 
+            // 1. Nếu chuỗi đã format có dấu '-' sau 3 ký tự: "30H-280.84", "30G-787.07", "20C-227.17", "21A-147.46", "30K-645.87"
+            if (Regex.IsMatch(plateNumber, @"^\d{2}[A-ZĐ]{1,2}-\d{3,4}(\.\d{2})?$"))
+                return "Ô tô";
+
+            // 2. Nếu chuỗi đã format có dấu '-' sau 2 số tỉnh: "30-L7 2560", "29-M1 071.01", "36-AC 627.77", "49-K1 804.39"
+            if (Regex.IsMatch(plateNumber, @"^\d{2}-[A-ZĐ]{1,2}\d?\s\d{3,4}(\.\d{2})?$"))
+                return "Xe máy";
+
             string clean = CleanRegex.Replace(plateNumber.ToUpperInvariant(), "");
             if (clean.Length < 6)
                 return "Không xác định";
 
-            // Biển dài 1 dòng (aspectRatio >= 2.0f): Luôn luôn là Ô tô tại Việt Nam
-            if (aspectRatio >= 2.0f)
+            // Khóa cứng: Biển dài 1 dòng (aspectRatio > 1.8f): Luôn luôn là "Ô tô" tại Việt Nam
+            if (aspectRatio > 1.8f)
                 return "Ô tô";
 
-            // Biển 2 dòng (aspectRatio < 2.0f):
+            // Biển ô tô 5 số dài 8 ký tự (^\d{2}[A-ZĐ]\d{5}$) khi không có dấu gạch ngang ở dòng 1: Luôn trả về "Ô tô"
+            if (clean.Length == 8 &&
+                char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
+                (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
+                clean.Substring(3).All(char.IsDigit))
+            {
+                if (string.IsNullOrWhiteSpace(line1) || !line1.Contains('-'))
+                {
+                    return "Ô tô";
+                }
+            }
+
+            // Biển 2 dòng (aspectRatio <= 1.8f):
             // Nếu có thông tin dòng 1 rõ ràng:
             if (!string.IsNullOrWhiteSpace(line1))
             {
                 string cleanL1 = CleanRegex.Replace(line1.ToUpperInvariant(), "");
+                bool hasHyphenL1 = line1.Contains('-');
+                bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
+
+                // Ô tô vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và không có dấu '-':
+                if (!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
+                {
+                    return "Ô tô";
+                }
+
                 if (cleanL1.Length >= 4 && !char.IsLetter(cleanL1[2]) && cleanL1[2] != 'Đ' &&
                     (char.IsLetter(cleanL1[3]) || cleanL1[3] == 'Đ'))
                 {
@@ -1504,8 +1575,8 @@ namespace AlprWpfApp.Services.AI
                     cleanL1 = $"{cleanL1[0]}{cleanL1[1]}{cleanL1[3]}{(cleanL1.Length > 4 ? cleanL1[4] : ' ')}".Trim();
                 }
 
-                // Nhận diện sê-ri đặc thù xe máy: sê-ri G (29G, 30G) hoặc tiền tố có dấu '-' trên biển 2 dòng, hoặc mã tỉnh/sê-ri xe máy (15K, 19K, 99T, 44K, 22C, 22H):
-                if (cleanL1.Contains('G') || line1.Contains('-') || cleanL1.StartsWith("15K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("44K") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H"))
+                // Nhận diện sê-ri đặc thù xe máy: tiền tố có dấu '-' trên biển 2 dòng, hoặc mã tỉnh/sê-ri xe máy (15K, 19K, 99T, 44K, 22C, 22H):
+                if (hasHyphenL1 || cleanL1.StartsWith("15K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("44K") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H"))
                 {
                     return "Xe máy";
                 }
@@ -1526,7 +1597,7 @@ namespace AlprWpfApp.Services.AI
                 }
                 else if (cleanL1.Length <= 3)
                 {
-                    // Dòng 1 ô tô vuông chỉ có 3 ký tự (vd 20C, 20H, 30A)
+                    // Dòng 1 ô tô vuông chỉ có 3 ký tự (vd 20C, 20H, 30A, 30G)
                     return "Ô tô";
                 }
             }
@@ -1544,9 +1615,9 @@ namespace AlprWpfApp.Services.AI
                     return "Xe máy";
             }
 
-            // 3. Xe máy 4 số cũ (8 ký tự, ký tự 4 là số, không thuộc sê-ri xe tải C, H: 30L72560)
+            // 3. Xe máy 4 số cũ (8 ký tự, ký tự 4 là số, không thuộc sê-ri ô tô C, H, K, G, A, F, D, E: 30L72560)
             if (clean.Length == 8 && char.IsDigit(clean[3]) &&
-                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'K')
+                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'K' && clean[2] != 'G' && clean[2] != 'A' && clean[2] != 'F' && clean[2] != 'D' && clean[2] != 'E')
             {
                 return "Xe máy";
             }

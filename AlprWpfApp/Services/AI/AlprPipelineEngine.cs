@@ -219,26 +219,38 @@ namespace AlprWpfApp.Services.AI
                     bestIsValid = isValidFormat;
                     float cropRatio = (float)w / Math.Max(1, h);
                     string? line1 = (rawLines != null && rawLines.Count > 0) ? rawLines[0] : null;
-                    string detectedVehicleType = PlatePostProcessor.DetectVehicleType(cleanPlate, cropRatio, line1);
+                    string detectedVehicleType;
                     string detectedPlateColor;
 
-                    // Phân loại phương tiện và màu biển:
-                    // Nếu dòng 1 là tiền tố xe máy 4 ký tự hoặc được phân loại là "Xe máy":
-                    // Gán VehicleType = "Xe máy", khóa màu biển PlateColor = "Trắng" (xe máy dân sự Việt Nam không có biển màu vàng).
-                    string cleanL1 = !string.IsNullOrWhiteSpace(line1) ? Regex.Replace(line1, @"[^A-Z0-9Đđ]", "") : string.Empty;
-                    bool isMotoPrefix = cleanL1.Length >= 4 
-                        && (char.IsDigit(cleanL1[cleanL1.Length - 1]) || Regex.IsMatch(cleanL1, @"(AA|BB|CC|MD|AC)$", RegexOptions.IgnoreCase))
-                        && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(Math.Max(0, cleanL1.Length - 2)));
-
-                    if (isMotoPrefix || string.Equals(detectedVehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase))
+                    if (cropRatio > 1.8f)
                     {
-                        detectedVehicleType = "Xe máy";
-                        detectedPlateColor = "Trắng";
+                        // Khóa cứng: Biển dài 1 dòng (aspectRatio > 1.8) luôn luôn là Ô tô tại Việt Nam
+                        detectedVehicleType = "Ô tô";
+                        detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
                     }
                     else
                     {
-                        // Nếu là ô tô/xe tải: Giữ nguyên logic phân loại màu sắc hiện tại (ô tô kinh doanh vẫn nhận diện màu "Vàng")
-                        detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
+                        detectedVehicleType = PlatePostProcessor.DetectVehicleType(cleanPlate, cropRatio, line1);
+
+                        // Phân loại phương tiện và màu biển cho biển 2 dòng:
+                        string cleanL1 = !string.IsNullOrWhiteSpace(line1) ? Regex.Replace(line1, @"[^A-Z0-9Đđ]", "") : string.Empty;
+                        bool hasHyphenL1 = !string.IsNullOrWhiteSpace(line1) && line1.Contains('-');
+                        bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
+                        bool isCarSquareTop = !hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+
+                        bool isMotoPrefix = !isCarSquareTop && (hasHyphenL1 || cleanL1.Length >= 4 || isMotorNoisePrefix)
+                            && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(Math.Max(0, cleanL1.Length - 2)));
+
+                        if (!isCarSquareTop && (isMotoPrefix || string.Equals(detectedVehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            detectedVehicleType = "Xe máy";
+                            detectedPlateColor = "Trắng";
+                        }
+                        else
+                        {
+                            detectedVehicleType = "Ô tô";
+                            detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
+                        }
                     }
 
                     bestVehicleType = detectedVehicleType;
