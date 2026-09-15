@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using AlprWpfApp.ViewModels;
@@ -173,6 +174,35 @@ namespace AlprWpfApp.Views
 
             // Cập nhật sang ViewModel
             vm.UpdateRoiFromDrawing(normX, normY, normW, normH);
+        }
+
+        /// <summary>
+        /// Xử lý phím tắt duyệt ảnh test (Left / Right / Space) tập trung,
+        /// ngoại trừ trường hợp người dùng đang nhập văn bản trong TextBox / PasswordBox.
+        /// </summary>
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            base.OnPreviewKeyDown(e);
+
+            // Bỏ qua nếu người dùng đang gõ trong TextBox hoặc PasswordBox
+            if (Keyboard.FocusedElement is TextBoxBase or PasswordBox)
+            {
+                return;
+            }
+
+            if (DataContext is MainViewModel vm && vm.HasTestFolderImages)
+            {
+                if (e.Key is Key.Right or Key.Space)
+                {
+                    vm.NextTestImageCommand.Execute(null);
+                    e.Handled = true;
+                }
+                else if (e.Key == Key.Left)
+                {
+                    vm.PreviousTestImageCommand.Execute(null);
+                    e.Handled = true;
+                }
+            }
         }
 
         protected override void OnClosing(CancelEventArgs e)

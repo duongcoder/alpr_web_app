@@ -298,9 +298,41 @@
                                 <Button Content="Chọn Video" Command="{Binding BrowseVideoFileCommand}" 
                                         Style="{StaticResource ModernButtonStyle}" Background="#334155" Margin="0,0,6,0" Padding="12,8" />
                                 <Button Content="Chọn Ảnh Test" Command="{Binding SelectTestImageCommand}" 
-                                        Style="{StaticResource CyanButtonStyle}" Padding="12,8" />
+                                        Style="{StaticResource CyanButtonStyle}" Margin="0,0,6,0" Padding="12,8" />
+                                <Button Content="📁 Chọn Folder Test" Command="{Binding SelectTestFolderCommand}" 
+                                        Style="{StaticResource ModernButtonStyle}" Background="#0284C7" Padding="12,8"
+                                        ToolTip="Chọn thư mục chứa nhiều ảnh test để duyệt và nhận diện tự động" />
                             </StackPanel>
                         </Grid>
+
+                        <!-- Test Folder Navigation Bar (Visible when folder has images) -->
+                        <Border Margin="0,0,0,12" Background="#0F172A" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,6"
+                                Visibility="{Binding HasTestFolderImages, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Previous Button -->
+                                <Button Grid.Column="0" Content="⏮ Trước" Command="{Binding PreviousTestImageCommand}"
+                                        Style="{StaticResource ModernButtonStyle}" Background="#334155" Padding="14,6" FontSize="12"
+                                        ToolTip="Ảnh trước đó (Phím tắt: Mũi tên Trái [Left])" />
+
+                                <!-- Progress Text -->
+                                <TextBlock Grid.Column="1" Text="{Binding TestFolderProgress}"
+                                           Foreground="#00E5FF" FontWeight="SemiBold" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" Margin="10,0"
+                                           ToolTip="{Binding TestFolderProgress}" />
+
+                                <!-- Next Button -->
+                                <Button Grid.Column="2" Content="⏭ Kế Tiếp" Command="{Binding NextTestImageCommand}"
+                                        Style="{StaticResource ModernButtonStyle}" Background="#0284C7" Padding="14,6" FontSize="12"
+                                        ToolTip="Ảnh kế tiếp (Phím tắt: Mũi tên Phải [Right] hoặc Phím Cách [Space])" />
+                            </Grid>
+                        </Border>
 
                         <!-- Primary Action Buttons Bar -->
                         <Grid>

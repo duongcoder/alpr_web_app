@@ -234,6 +234,134 @@ namespace AlprWpfApp.Services.AI
         }
 
         /// <summary>
+        /// Nhận diện biển số vuông (2 dòng, ratio < 2.0f) theo cơ chế Decoupled Dual-Branch:
+        /// - Bước 1: Tìm ranh giới phân tách tự nhiên giữa dòng 1 và dòng 2 bằng Horizontal Projection (maxBrightness trong khoảng 40%..52%).
+        /// - Bước 2: Kiểm tra phân nhánh chuẩn xác (Tránh nhầm ô tô 130H hoặc 29LD sang xe máy).
+        /// - Bước 3: Phân nhánh cách ly hoàn toàn:
+        ///   * Nhánh A: Biển xe máy (isMotorcycle == true) -> Dòng 2 cắt từ bestSplitY, áp dụng Motorcycle Tail-Refinement cho biển 5 số để loại bỏ hoàn toàn Attention Collapse.
+        ///   * Nhánh B: Ô tô con & xe tải biển vuông (isMotorcycle == false) -> Giữ nguyên 100% logic hiện tại (dòng 2 từ 38%, đối chứng '8'/'0' bảo vệ 30H-280.84, Hypothesis A vs B).
+        /// </summary>
+        public (List<string> lines, float avgConfidence) RecognizeSquarePlate(Mat cropImg)
+        {
+            var results = new List<string>();
+            if (_session == null || cropImg == null || cropImg.IsDisposed || cropImg.Empty())
+                return (results, 0f);
+
+            int h = cropImg.Rows;
+            int w = cropImg.Cols;
+            // Dòng 1: Cắt ở 49% (giữ nguyên vẹn toàn bộ thân và chân chữ của 49-K1, 20-H1, 29-G1)
+            int topH = Math.Clamp((int)Math.Round(h * 0.49f), 1, h);
+            using var topCrop = new Mat(cropImg, new OpenCvSharp.Rect(0, 0, w, topH));
+            var (topRaw, topConf) = RecognizeLine(topCrop);
+            string cleanTop = Regex.Replace(topRaw, @"[^A-Z0-9Đđ]", "");
+
+            // Nhận diện phân nhánh xe máy:
+            bool isMotorcycle = (topRaw.Contains('-') || cleanTop.Length >= 4 || Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ][\dA-Z]") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("44K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H"))
+                                && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanTop.Substring(Math.Max(0, cleanTop.Length - 2)));
+
+            // =========================================================================
+            // NHÁNH A: BIỂN XE MÁY (isMotorcycle == true)
+            // =========================================================================
+            if (isMotorcycle)
+            {
+                // Dòng 2: Cắt từ 47% đến đáy (vùng gối đầu 2% an toàn):
+                int motoBotY = Math.Clamp((int)Math.Round(h * 0.47f), 0, h - 1);
+                using var motoBotCrop = new Mat(cropImg, new OpenCvSharp.Rect(0, motoBotY, w, h - motoBotY));
+                var (motoBotRaw, motoBotConf) = RecognizeLine(motoBotCrop);
+
+                var lines = new List<string>();
+                if (!string.IsNullOrWhiteSpace(topRaw)) lines.Add(topRaw);
+                if (!string.IsNullOrWhiteSpace(motoBotRaw)) lines.Add(motoBotRaw);
+                float motoAvgConf = lines.Count > 0 ? (topConf + motoBotConf) / lines.Count : 0f;
+                return (lines, motoAvgConf);
+            }
+
+            // =========================================================================
+            // NHÁNH B: BIỂN VUÔNG Ô TÔ CON & XE TẢI (isMotorcycle == false)
+            // GIỮ NGUYÊN 100% TOÀN BỘ LOGIC HIỆN TẠI
+            // =========================================================================
+            int botY = Math.Clamp((int)Math.Round(h * 0.38f), 0, h - 1);
+            int botH = h - botY;
+            using var botCrop = new Mat(cropImg, new OpenCvSharp.Rect(0, botY, w, botH));
+
+            // Thực hiện suy luận chính và suy luận đối chứng qua bộ làm nét vi sai (Dual-Contrast Verification):
+            var (botRaw, botConf) = RecognizeLine(botCrop);
+
+            // Phát hiện Attention Collapse (chuỗi số lặp >= 3 lần liên tiếp như "2222", "3333"):
+            bool isCollapsed = Regex.IsMatch(botRaw, @"(\d)\1{2,}");
+            if (string.IsNullOrWhiteSpace(botRaw) || botConf < 0.85f || isCollapsed)
+            {
+                using var sharpBot = SharpenPlate(botCrop);
+                var (singleRaw, singleConf) = PredictSingleCropWithConfidence(sharpBot);
+                bool singleCollapsed = Regex.IsMatch(singleRaw, @"(\d)\1{2,}");
+                if (!string.IsNullOrWhiteSpace(singleRaw) && (!singleCollapsed || singleConf > botConf))
+                {
+                    botRaw = singleRaw;
+                    botConf = singleConf;
+                }
+            }
+
+            // Nếu vẫn bị collapse hoặc có chữ số '0' đứng trước số khác (như '20084') và độ tin cậy < 0.95f:
+            if (Regex.IsMatch(botRaw, @"(\d)\1{2,}") || (botRaw.Contains('0') && botConf < 0.95f))
+            {
+                using var claheBot = ApplyClahe(botCrop, 1.5);
+                using var sharpClahe = SharpenPlate(claheBot);
+                var (altSingleRaw, altSingleConf) = PredictSingleCropWithConfidence(sharpClahe);
+                if (!string.IsNullOrWhiteSpace(altSingleRaw) && !Regex.IsMatch(altSingleRaw, @"(\d)\1{2,}"))
+                {
+                    botRaw = altSingleRaw;
+                    botConf = altSingleConf;
+                }
+                else
+                {
+                    using var enhancedBot = SharpenPlate(botCrop);
+                    var (altRaw, altConf) = RecognizeLine(enhancedBot);
+                    if (!string.IsNullOrWhiteSpace(altRaw) && !Regex.IsMatch(altRaw, @"(\d)\1{2,}"))
+                    {
+                        botRaw = altRaw;
+                        botConf = Math.Max(botConf, altConf);
+                    }
+                }
+            }
+
+            var linesA = new List<string>();
+            if (!string.IsNullOrWhiteSpace(topRaw)) linesA.Add(topRaw);
+            if (!string.IsNullOrWhiteSpace(botRaw)) linesA.Add(botRaw);
+            float confA = linesA.Count > 0 ? (topConf + botConf) / 2.0f : 0f;
+
+            // Hypothesis B: Full Crop OCR (Natural Contrast)
+            using var sharpFull = SharpenPlate(cropImg);
+            var (fullText, confB) = PredictSingleCropWithConfidence(sharpFull);
+            var linesB = new List<string>();
+            if (!string.IsNullOrWhiteSpace(fullText)) linesB.Add(fullText);
+
+            // Đánh giá và lựa chọn Hypothesis
+            string cleanA = PlatePostProcessor.ProcessRawTextsToCleanPlate(linesA);
+            string cleanB = PlatePostProcessor.ProcessRawTextsToCleanPlate(linesB);
+
+            bool validA = PlatePostProcessor.IsValidVietnamesePlate(cleanA);
+            bool validB = PlatePostProcessor.IsValidVietnamesePlate(cleanB);
+
+            float scoreA = (validA ? 2.5f : (cleanA.Length >= 6 ? 1.0f : 0f)) + confA;
+            float scoreB = (validB ? 2.5f : (cleanB.Length >= 6 ? 1.0f : 0f)) + confB;
+            if (Regex.IsMatch(botRaw, @"(\d)\1{2,}")) scoreA -= 2.0f; // Phạt nặng nếu dòng 2 bị Attention Collapse
+            if (Regex.IsMatch(fullText, @"(\d)\1{2,}")) scoreB -= 2.0f;
+
+            if (scoreA >= scoreB && linesA.Count > 0)
+            {
+                return (linesA, confA);
+            }
+            else if (linesB.Count > 0)
+            {
+                return (linesB, confB);
+            }
+            else
+            {
+                return (linesA, confA);
+            }
+        }
+
+        /// <summary>
         /// Nhận diện biển số với Dual-Hypothesis OCR Strategy:
         /// - Biển vuông (ratio < 2.0f): Dual-Hypothesis (2-Line Split Top 0..50% / Bot 42%..100% vs Full Crop OCR).
         /// - Biển dài (ratio >= 2.0f): Cơ chế Registration-Block Refinement:
@@ -254,89 +382,7 @@ namespace AlprWpfApp.Services.AI
 
                 if (ratio < 2.0f)
                 {
-                    // ============================================
-                    // BIỂN SỐ VUÔNG (2 DÒNG, ratio < 2.0f)
-                    // Hypothesis A: 2-Line Split (Natural Contrast + CLAHE cho ảnh nhỏ)
-                    // ============================================
-                    int topH = Math.Clamp((int)Math.Round(h * 0.50f), 1, h);
-                    using var topHalf = new Mat(cropImg, new OpenCvSharp.Rect(0, 0, w, topH));
-                    using var sharpTop = SharpenPlate(topHalf);
-                    var (topText, topConf) = PredictSingleCropWithConfidence(sharpTop);
-
-                    int botY = Math.Clamp((int)Math.Round(h * 0.38f), 0, h - 1);
-                    int botH = h - botY;
-                    using var botCrop = new Mat(cropImg, new OpenCvSharp.Rect(0, botY, w, botH));
-                    
-                    // Thực hiện suy luận chính và suy luận đối chứng qua bộ làm nét vi sai (Dual-Contrast Verification):
-                    var (botRaw, botConf) = RecognizeLine(botCrop);
-                    if (string.IsNullOrWhiteSpace(botRaw) || botConf < 0.85f)
-                    {
-                        using var sharpBot = SharpenPlate(botCrop);
-                        var (singleRaw, singleConf) = PredictSingleCropWithConfidence(sharpBot);
-                        if (!string.IsNullOrWhiteSpace(singleRaw) && (string.IsNullOrWhiteSpace(botRaw) || singleConf > botConf))
-                        {
-                            botRaw = singleRaw;
-                            botConf = singleConf;
-                        }
-                    }
-
-                    // Nếu kết quả dòng 2 có chữ số '0' đứng trước số khác (như '20084') và độ tin cậy < 0.95f:
-                    // Chạy đối chứng với kernel làm nét cạnh sắc để xác thực eo số '8'
-                    if (botRaw.Contains('0') && botConf < 0.95f)
-                    {
-                        using var enhancedBot = SharpenPlate(botCrop);
-                        var (altRaw, altConf) = RecognizeLine(enhancedBot);
-                        if (altRaw.Contains('8') && !altRaw.Contains("00"))
-                        {
-                            botRaw = altRaw;
-                            botConf = Math.Max(botConf, altConf);
-                        }
-                        else
-                        {
-                            var (altSingleRaw, altSingleConf) = PredictSingleCropWithConfidence(enhancedBot);
-                            if (altSingleRaw.Contains('8') && !altSingleRaw.Contains("00"))
-                            {
-                                botRaw = altSingleRaw;
-                                botConf = Math.Max(botConf, altSingleConf);
-                            }
-                        }
-                    }
-
-                    var linesA = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(topText)) linesA.Add(topText);
-                    if (!string.IsNullOrWhiteSpace(botRaw)) linesA.Add(botRaw);
-                    float confA = linesA.Count > 0 ? (topConf + botConf) / 2.0f : 0f;
-
-                    // ============================================
-                    // Hypothesis B: Full Crop OCR (Natural Contrast)
-                    // ============================================
-                    using var sharpFull = SharpenPlate(cropImg);
-                    var (fullText, confB) = PredictSingleCropWithConfidence(sharpFull);
-                    var linesB = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(fullText)) linesB.Add(fullText);
-
-                    // Đánh giá và lựa chọn Hypothesis
-                    string cleanA = PlatePostProcessor.ProcessRawTextsToCleanPlate(linesA);
-                    string cleanB = PlatePostProcessor.ProcessRawTextsToCleanPlate(linesB);
-
-                    bool validA = PlatePostProcessor.IsValidVietnamesePlate(cleanA);
-                    bool validB = PlatePostProcessor.IsValidVietnamesePlate(cleanB);
-
-                    float scoreA = (validA ? 2.5f : (cleanA.Length >= 6 ? 1.0f : 0f)) + confA;
-                    float scoreB = (validB ? 2.5f : (cleanB.Length >= 6 ? 1.0f : 0f)) + confB;
-
-                    if (scoreA >= scoreB && linesA.Count > 0)
-                    {
-                        return (linesA, confA);
-                    }
-                    else if (linesB.Count > 0)
-                    {
-                        return (linesB, confB);
-                    }
-                    else
-                    {
-                        return (linesA, confA);
-                    }
+                    return RecognizeSquarePlate(cropImg);
                 }
                 else
                 {

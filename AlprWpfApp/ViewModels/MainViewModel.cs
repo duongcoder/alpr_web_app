@@ -11,6 +11,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
 using OpenCvSharp;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using AlprWpfApp.Models;
 using AlprWpfApp.Services.AI;
 using AlprWpfApp.Services.Camera;
@@ -58,6 +60,19 @@ namespace AlprWpfApp.ViewModels
 
         [ObservableProperty]
         private string _imageFilePath = string.Empty;
+
+        // Folder Batch Testing Properties
+        [ObservableProperty]
+        private List<string> _testFolderFiles = new();
+
+        [ObservableProperty]
+        private int _currentTestFolderIndex = -1;
+
+        [ObservableProperty]
+        private string _testFolderProgress = string.Empty;
+
+        [ObservableProperty]
+        private bool _hasTestFolderImages = false;
 
         // UI Recognition Properties
         [ObservableProperty]
@@ -497,6 +512,120 @@ namespace AlprWpfApp.ViewModels
                 }
             }
         }
+
+        #region Folder Batch Testing (Chọn Thư Mục Test & Duyệt Ảnh)
+
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern int StrCmpLogicalW(string psz1, string psz2);
+
+        private static int NaturalSortComparer(string a, string b)
+        {
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    return StrCmpLogicalW(a, b);
+                }
+            }
+            catch { }
+            return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void LoadAndRecognizeTestImage(int index)
+        {
+            if (TestFolderFiles.Count == 0 || index < 0 || index >= TestFolderFiles.Count)
+                return;
+
+            if (IsStreaming)
+            {
+                StopCamera();
+            }
+
+            CurrentTestFolderIndex = index;
+            string filePath = TestFolderFiles[index];
+            ImageFilePath = filePath;
+            SelectedSourceType = CameraSourceType.ImageFile;
+            TestFolderProgress = $"{index + 1}/{TestFolderFiles.Count}: {Path.GetFileName(filePath)}";
+
+            if (File.Exists(filePath))
+            {
+                using var mat = Cv2.ImRead(filePath, ImreadModes.Color);
+                if (!mat.Empty())
+                {
+                    ProcessSingleFrame(mat);
+                }
+            }
+        }
+
+        [RelayCommand]
+        public void SelectTestFolder()
+        {
+            var dlg = new OpenFolderDialog
+            {
+                Title = "Chọn thư mục chứa tập tin ảnh test biển số xe",
+                Multiselect = false
+            };
+
+            // Mặc định mở thư mục samples nếu có
+            string samplesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "samples");
+            if (Directory.Exists(samplesDir))
+            {
+                dlg.InitialDirectory = Path.GetFullPath(samplesDir);
+            }
+
+            if (dlg.ShowDialog() == true && !string.IsNullOrWhiteSpace(dlg.FolderName) && Directory.Exists(dlg.FolderName))
+            {
+                var supportedExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ".jpg", ".jpeg", ".png", ".bmp", ".webp"
+                };
+
+                var files = Directory.EnumerateFiles(dlg.FolderName, "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => supportedExts.Contains(Path.GetExtension(f)))
+                    .ToList();
+
+                files.Sort(NaturalSortComparer);
+
+                if (files.Count > 0)
+                {
+                    TestFolderFiles = files;
+                    HasTestFolderImages = true;
+                    LoadAndRecognizeTestImage(0);
+                    CameraStatus = $"Đã tải {files.Count} ảnh test";
+                }
+                else
+                {
+                    TestFolderFiles = new();
+                    CurrentTestFolderIndex = -1;
+                    TestFolderProgress = string.Empty;
+                    HasTestFolderImages = false;
+                    CameraStatus = "Thư mục không có ảnh hợp lệ (.jpg, .png, .bmp, .webp)";
+                    MessageBox.Show("Thư mục đã chọn không chứa bất kỳ tập tin ảnh hợp lệ nào (.jpg, .jpeg, .png, .bmp, .webp).", "Thông báo", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+        }
+
+        [RelayCommand]
+        public void NextTestImage()
+        {
+            if (TestFolderFiles.Count == 0)
+                return;
+
+            int nextIndex = (CurrentTestFolderIndex + 1) % TestFolderFiles.Count;
+            LoadAndRecognizeTestImage(nextIndex);
+        }
+
+        [RelayCommand]
+        public void PreviousTestImage()
+        {
+            if (TestFolderFiles.Count == 0)
+                return;
+
+            int prevIndex = (CurrentTestFolderIndex - 1 + TestFolderFiles.Count) % TestFolderFiles.Count;
+            LoadAndRecognizeTestImage(prevIndex);
+        }
+
+        #endregion
 
         [RelayCommand]
         public void SelectImage()

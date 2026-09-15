@@ -181,9 +181,9 @@ namespace AlprWpfApp.Services.AI
                 var (rawLines, ocrConf) = _parseqRecognizer.RecognizePlateLines(safeCrop);
                 string cleanPlate = PlatePostProcessor.ProcessRawTextsToCleanPlate(rawLines);
 
-                // Kiểm tra định dạng chuẩn biển số Việt Nam
-                bool isValidFormat = Regex.IsMatch(cleanPlate, @"^\d{2}[A-ZĐ]\d{4,5}$") ||
-                                     Regex.IsMatch(cleanPlate, @"^\d{2}[A-Z]{2}\d{4,5}$") ||
+                // Kiểm tra định dạng chuẩn biển số Việt Nam (hỗ trợ cả ô tô 1-2 dòng và xe máy, định dạng có dấu và không dấu)
+                bool isValidFormat = Regex.IsMatch(cleanPlate, @"^(\d{2}[A-ZĐ][\dA-Z]\d{4,5}|\d{2}[A-ZĐ]\d{4,5}|\d{2}[A-Z]{2}\d{4,5})$") ||
+                                     Regex.IsMatch(cleanPlate, @"^(\d{2}-[A-ZĐ]{1,2}\d?\s\d{3,4}(\.\d{2})?|\d{2}[A-ZĐ]{1,2}-\d{3}\.\d{2}|\d{2}[A-ZĐ]{1,2}-\d{4})$") ||
                                      PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
 
                 // Trọng số không gian & Cự ly ưu tiên (Spatial Proximity Dominance):
@@ -217,8 +217,32 @@ namespace AlprWpfApp.Services.AI
                     bestRawLines = rawLines;
                     bestOcrConf = ocrConf;
                     bestIsValid = isValidFormat;
-                    bestPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop);
-                    bestVehicleType = PlatePostProcessor.ClassifyVehicle(cleanPlate);
+                    float cropRatio = (float)w / Math.Max(1, h);
+                    string? line1 = (rawLines != null && rawLines.Count > 0) ? rawLines[0] : null;
+                    string detectedVehicleType = PlatePostProcessor.DetectVehicleType(cleanPlate, cropRatio, line1);
+                    string detectedPlateColor;
+
+                    // Phân loại phương tiện và màu biển:
+                    // Nếu dòng 1 là tiền tố xe máy 4 ký tự hoặc được phân loại là "Xe máy":
+                    // Gán VehicleType = "Xe máy", khóa màu biển PlateColor = "Trắng" (xe máy dân sự Việt Nam không có biển màu vàng).
+                    string cleanL1 = !string.IsNullOrWhiteSpace(line1) ? Regex.Replace(line1, @"[^A-Z0-9Đđ]", "") : string.Empty;
+                    bool isMotoPrefix = cleanL1.Length >= 4 
+                        && (char.IsDigit(cleanL1[cleanL1.Length - 1]) || Regex.IsMatch(cleanL1, @"(AA|BB|CC|MD|AC)$", RegexOptions.IgnoreCase))
+                        && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(Math.Max(0, cleanL1.Length - 2)));
+
+                    if (isMotoPrefix || string.Equals(detectedVehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase))
+                    {
+                        detectedVehicleType = "Xe máy";
+                        detectedPlateColor = "Trắng";
+                    }
+                    else
+                    {
+                        // Nếu là ô tô/xe tải: Giữ nguyên logic phân loại màu sắc hiện tại (ô tô kinh doanh vẫn nhận diện màu "Vàng")
+                        detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
+                    }
+
+                    bestVehicleType = detectedVehicleType;
+                    bestPlateColor = detectedPlateColor;
                 }
             }
 
