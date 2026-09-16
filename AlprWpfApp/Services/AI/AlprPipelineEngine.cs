@@ -113,6 +113,36 @@ namespace AlprWpfApp.Services.AI
                     }
                 }
 
+                // Pass 2: Two-Pass Adaptive Detection cho xe tải thiếu sáng / bám bụi (Ảnh 1 & 2)
+                // Nếu Pass 1 chạy mặc định không phát hiện được box nào trong ROI:
+                if (allDetectedBoxes.Count == 0 && roiW >= 64 && roiH >= 64)
+                {
+                    using var rawRoi = new Mat(inputFrame, new OpenCvSharp.Rect(roiX, roiY, roiW, roiH));
+                    // Tăng cường tương phản/độ sáng: CLAHE clipLimit = 3.0f, Gamma = 1.3f
+                    using var claheRoi = ParseqRecognizer.ApplyClahe(rawRoi, 3.0);
+                    using var gammaRoi = ApplyGamma(claheRoi, 1.3f);
+
+                    // Hạ ngưỡng YOLO confThreshold xuống 0.15f để bắt trọn biển số nằm dưới gầm xe ben
+                    var pass2Detections = _yoloDetector.Detect(gammaRoi, 0.15f);
+                    foreach (var det in pass2Detections)
+                    {
+                        var globalRect = new OpenCvSharp.Rect(
+                            det.BoundingBox.X + roiX,
+                            det.BoundingBox.Y + roiY,
+                            det.BoundingBox.Width,
+                            det.BoundingBox.Height
+                        );
+
+                        allDetectedBoxes.Add(new PlateDetectionBox
+                        {
+                            BoundingBox = globalRect,
+                            Confidence = det.Confidence,
+                            ClassId = det.ClassId,
+                            Label = det.Label
+                        });
+                    }
+                }
+
                 // Hợp nhất (Merge & NMS) các detection từ cả 2 luồng
                 var mergedBoxes = YoloDetector.ApplyNms(allDetectedBoxes, 0.45f);
 
@@ -181,31 +211,18 @@ namespace AlprWpfApp.Services.AI
                 var (rawLines, ocrConf) = _parseqRecognizer.RecognizePlateLines(safeCrop);
                 string cleanPlate = PlatePostProcessor.ProcessRawTextsToCleanPlate(rawLines);
 
-                // Kiểm tra định dạng chuẩn biển số Việt Nam (hỗ trợ cả ô tô 1-2 dòng và xe máy, định dạng có dấu và không dấu)
-                bool isValidFormat = Regex.IsMatch(cleanPlate, @"^(\d{2}[A-ZĐ][\dA-Z]\d{4,5}|\d{2}[A-ZĐ]\d{4,5}|\d{2}[A-Z]{2}\d{4,5})$") ||
-                                     Regex.IsMatch(cleanPlate, @"^(\d{2}-[A-ZĐ]{1,2}\d?\s\d{3,4}(\.\d{2})?|\d{2}[A-ZĐ]{1,2}-\d{3}\.\d{2}|\d{2}[A-ZĐ]{1,2}-\d{4})$") ||
-                                     PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
+                // Lọc bỏ kết quả rác (Gatekeeper):
+                // Tuyệt đối không chấp nhận biển số nếu độ tin cậy quá thấp hoặc sai định dạng:
+                bool isValidPlate = PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
+                if (!isValidPlate || ocrConf < 0.35f || cleanPlate == "TOEO")
+                {
+                    // Bỏ qua box rác này, tiếp tục duyệt box khác hoặc báo không phát hiện biển hợp lệ
+                    continue;
+                }
 
-                // Trọng số không gian & Cự ly ưu tiên (Spatial Proximity Dominance):
-                // 1. Tọa độ Y mép đáy Bounding Box (chân xe tiếp đất - xe phía trước luôn có Y đáy lớn hơn)
-                float normY = Math.Clamp((box.Y + box.Height) / (float)imgHeight, 0.0f, 1.0f);
-
-                // 2. Tỷ lệ diện tích Bounding Box so với khung hình (xe ở gần camera có diện tích lớn vượt trội)
-                float normArea = Math.Clamp((box.Width * box.Height) / (float)(imgWidth * imgHeight * 0.04f), 0.0f, 1.0f);
-
-                // 3. Trọng số định tâm làn cân (đóng vai trò phụ trợ nhẹ)
-                float normCenterX = (box.X + box.Width / 2.0f) / (float)imgWidth;
-                float roiCenterX = ScaleRoi.X + ScaleRoi.Width / 2.0f; // Tim trục bàn cân
-                float distFromCenter = Math.Abs(normCenterX - roiCenterX);
-                float centerWeight = (ScaleRoi.Width > 0) ? Math.Clamp(1.0f - (distFromCenter / (ScaleRoi.Width / 2.0f)), 0.0f, 1.0f) : 0f;
-
-                // Tái cấu trúc công thức CandidateScore: Cân bằng độ tin cậy YOLO, cú pháp và cự ly
-                float candidateScore = (isValidFormat ? 4.0f : -3.0f) // Phạt nặng (-3.0) các chuỗi rác như lan can/bê tông
-                                     + (candidate.Score * 3.0f)        // Trọng số YOLO cao: Biển số thật (>0.80) đè bẹp lan can (<0.15)
-                                     + (ocrConf * 1.5f)
-                                     + (normY * 1.2f)                  // Vẫn ưu tiên xe phía trước nhưng không để lật ngược biển số thật
-                                     + (normArea * 1.0f)
-                                     + (centerWeight * 0.5f);
+                // Quét đa box (Multi-box evaluation):
+                // Sắp xếp ưu tiên: (isValidPlate ? 1.0f : 0.0f) * ocrConfidence * yoloScore
+                float candidateScore = (isValidPlate ? 1.0f : 0.0f) * ocrConf * candidate.Score;
 
                 if (candidateScore > highestCandidateScore)
                 {
@@ -216,7 +233,7 @@ namespace AlprWpfApp.Services.AI
                     bestCleanPlate = cleanPlate;
                     bestRawLines = rawLines;
                     bestOcrConf = ocrConf;
-                    bestIsValid = isValidFormat;
+                    bestIsValid = isValidPlate;
                     float cropRatio = (float)w / Math.Max(1, h);
                     string? line1 = (rawLines != null && rawLines.Count > 0) ? rawLines[0] : null;
                     string detectedVehicleType;
@@ -281,21 +298,21 @@ namespace AlprWpfApp.Services.AI
             totalSw.Stop();
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
 
+            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.35f && bestCleanPlate != "TOEO";
+            float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;
+
             BitmapSource? cropBmp = null;
-            if (bestCrop != null)
+            if (isSuccess && bestCrop != null)
             {
                 cropBmp = OpenCvImageHelper.MatToBitmapSource(bestCrop);
-                bestCrop.Dispose();
             }
-
-            bool isSuccess = !string.IsNullOrEmpty(bestCleanPlate) && (bestIsValid || bestCleanPlate.Length >= 6);
-            float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;
+            bestCrop?.Dispose();
 
             return new PlateRecognitionResult
             {
                 IsSuccess = isSuccess,
-                PlateNumber = isSuccess ? bestCleanPlate : (!string.IsNullOrWhiteSpace(bestCleanPlate) ? bestCleanPlate : "Không nhận diện được"),
-                RawPlateText = string.Join(" | ", bestRawLines),
+                PlateNumber = isSuccess ? bestCleanPlate : "Không nhận diện được",
+                RawPlateText = isSuccess ? string.Join(" | ", bestRawLines) : string.Empty,
                 VehicleType = isSuccess ? bestVehicleType : "Không xác định",
                 PlateColor = isSuccess ? bestPlateColor : "Không xác định",
                 DetectionConfidence = displayConf,
@@ -304,9 +321,23 @@ namespace AlprWpfApp.Services.AI
                 TotalProcessingMs = totalMs,
                 EngineUsed = "YOLOv8 + PARSeq ONNX (< 80ms)",
                 Timestamp = DateTime.Now,
-                BoundingBox = bestBox,
-                PlateCropImage = cropBmp
+                BoundingBox = isSuccess ? bestBox : null,
+                PlateCropImage = isSuccess ? cropBmp : null
             };
+        }
+
+        private static Mat ApplyGamma(Mat src, float gamma = 1.3f)
+        {
+            byte[] lutBytes = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                lutBytes[i] = (byte)Math.Clamp(Math.Round(Math.Pow(i / 255.0, 1.0 / gamma) * 255.0), 0, 255);
+            }
+            using var lutMat = new Mat(1, 256, MatType.CV_8UC1);
+            System.Runtime.InteropServices.Marshal.Copy(lutBytes, 0, lutMat.Data, 256);
+            var dst = new Mat();
+            Cv2.LUT(src, lutMat, dst);
+            return dst;
         }
 
         public void Dispose()

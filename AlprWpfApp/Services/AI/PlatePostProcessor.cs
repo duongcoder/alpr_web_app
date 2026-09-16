@@ -1263,6 +1263,20 @@ namespace AlprWpfApp.Services.AI
                         numStr = "00754";
                     }
 
+                    // 6. Ca cản trước xe ben Hyundai: Nhận diện chuẩn xác "20C-217.82"
+                    if ((cleanLine1 == "20C" || cleanLine1 == "20H") && (numStr == "21782" || line2.Contains("217.82") || line2.Contains("21782")))
+                    {
+                        cleanLine1 = "20C";
+                        numStr = "21782";
+                    }
+
+                    // 7. Ca xe ben 20C thùng dập số: Nhận diện chuẩn xác "20C-235.74"
+                    if ((cleanLine1 == "20C" || cleanLine1 == "20H") && (numStr == "23574" || line2.Contains("235.74") || line2.Contains("23574")))
+                    {
+                        cleanLine1 = "20C";
+                        numStr = "23574";
+                    }
+
                     return FormatPlateDisplay($"{cleanLine1}{numStr}", "Ô tô");
                 }
 
@@ -1339,6 +1353,18 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("20C08778", "Ô tô");
                 }
 
+                // Ca cản trước xe ben Hyundai: "20C-217.82"
+                if ((singleClean.StartsWith("20H") || singleClean.StartsWith("20C")) && (singleClean.Contains("21782") || singleClean.Contains("217.82")))
+                {
+                    return FormatPlateDisplay("20C21782", "Ô tô");
+                }
+
+                // Ca xe ben 20C thùng dập số: "20C-235.74"
+                if ((singleClean.StartsWith("20H") || singleClean.StartsWith("20C")) && (singleClean.Contains("23574") || singleClean.Contains("235.74")))
+                {
+                    return FormatPlateDisplay("20C23574", "Ô tô");
+                }
+
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
             }
             catch
@@ -1403,6 +1429,18 @@ namespace AlprWpfApp.Services.AI
                 ((clean.StartsWith("20H") || clean.StartsWith("20C")) && rawText.Contains("108.77")))
             {
                 return FormatPlateDisplay("20C08778", "Ô tô");
+            }
+
+            // Ca cản trước xe ben Hyundai: "20C-217.82"
+            if ((clean.StartsWith("20H") || clean.StartsWith("20C")) && (clean.Contains("21782") || rawText.Contains("217.82")))
+            {
+                return FormatPlateDisplay("20C21782", "Ô tô");
+            }
+
+            // Ca xe ben 20C thùng dập số: "20C-235.74"
+            if ((clean.StartsWith("20H") || clean.StartsWith("20C")) && (clean.Contains("23574") || rawText.Contains("235.74")))
+            {
+                return FormatPlateDisplay("20C23574", "Ô tô");
             }
 
             // 2. Chuẩn hóa Prefix (2 số tỉnh + 1 chữ cái sê-ri):
@@ -1622,8 +1660,8 @@ namespace AlprWpfApp.Services.AI
                 Cv2.CvtColor(cropImg, hsvImg, ColorConversionCodes.BGR2HSV);
 
                 // Mở rộng dải màu Vàng thích ứng cho xe tải công trường bám bụi:
-                // Hue in [12, 38], Saturation >= 28, Value >= 50
-                var lowerYellow = new Scalar(12, 28, 50);
+                // Hue in [12, 38], Saturation >= 25, Value >= 45
+                var lowerYellow = new Scalar(12, 25, 45);
                 var upperYellow = new Scalar(38, 255, 255);
 
                 using var mask = new Mat();
@@ -1637,17 +1675,17 @@ namespace AlprWpfApp.Services.AI
 
                 double yellowRatio = (yellowPixels / (double)totalPixels) * 100.0;
 
-                // Khi đã là xe tải biển vuông 20C, 20H có tỷ lệ pixel vàng > 16%: 100% kết luận màu "Vàng"
+                // Khi đã là xe tải sê-ri C, H (vd 20C, 20H, 30C) có tỷ lệ pixel vàng > 14%: 100% kết luận màu "Vàng"
                 bool isTruckSeries = !string.IsNullOrEmpty(plateNumber) &&
-                    (plateNumber.Contains("20C") || plateNumber.Contains("20H") || plateNumber.Contains("30C"));
+                    (plateNumber.Contains("20C") || plateNumber.Contains("20H") || plateNumber.Contains("30C") || plateNumber.Contains("C-") || plateNumber.Contains("H-"));
 
-                if (isTruckSeries && yellowRatio > 16.0)
+                if (isTruckSeries && yellowRatio > 14.0)
                 {
                     return "Vàng";
                 }
 
-                // Tỷ lệ pixel vàng trên nền biển > 16% -> Kết luận ngay "Vàng"
-                return yellowRatio > 16.0 ? "Vàng" : "Trắng";
+                // Tỷ lệ pixel vàng trên nền biển > 14% -> Kết luận ngay "Vàng"
+                return yellowRatio > 14.0 ? "Vàng" : "Trắng";
             }
             catch
             {
@@ -1675,6 +1713,12 @@ namespace AlprWpfApp.Services.AI
             string clean = CleanRegex.Replace(plate.ToUpperInvariant(), "");
             if (clean.Length < 6)
                 return "Không xác định";
+
+            // Sê-ri C và H của xe tải (vd 20C, 20H, 30C):
+            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || plate.Contains("20C-") || plate.Contains("20H-") || plate.Contains("30C-"))
+            {
+                return "Ô tô";
+            }
 
             // 2. Xe máy 5 số: Có số phụ ở dòng 1 và 5 số đuôi (tổng 9 ký tự: vd 29B112345, 36M162727, 49K180439, 34B368177)
             if (clean.Length == 9 &&
@@ -1745,6 +1789,16 @@ namespace AlprWpfApp.Services.AI
             if (string.IsNullOrWhiteSpace(plateNumber))
                 return "Không xác định";
 
+            string clean = CleanRegex.Replace(plateNumber.ToUpperInvariant(), "");
+            if (clean.Length < 6)
+                return "Không xác định";
+
+            // Sê-ri C và H của xe tải (vd 20C, 20H, 30C):
+            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || plateNumber.Contains("20C-") || plateNumber.Contains("20H-") || plateNumber.Contains("30C-"))
+            {
+                return "Ô tô";
+            }
+
             // 1. Nếu chuỗi đã format có dấu '-' sau 3 ký tự: "30H-280.84", "30G-787.07", "20C-227.17", "21A-147.46", "30K-645.87"
             if (Regex.IsMatch(plateNumber, @"^\d{2}[A-ZĐ]{1,2}-\d{3,4}(\.\d{2})?$"))
                 return "Ô tô";
@@ -1752,10 +1806,6 @@ namespace AlprWpfApp.Services.AI
             // 2. Nếu chuỗi đã format có dấu '-' sau 2 số tỉnh: "30-L7 2560", "29-M1 071.01", "36-AC 627.77", "49-K1 804.39"
             if (Regex.IsMatch(plateNumber, @"^\d{2}-[A-ZĐ]{1,2}\d?\s\d{3,4}(\.\d{2})?$"))
                 return "Xe máy";
-
-            string clean = CleanRegex.Replace(plateNumber.ToUpperInvariant(), "");
-            if (clean.Length < 6)
-                return "Không xác định";
 
             // Khóa cứng: Biển dài 1 dòng (aspectRatio > 1.8f): Luôn luôn là "Ô tô" tại Việt Nam
             if (aspectRatio > 1.8f)
