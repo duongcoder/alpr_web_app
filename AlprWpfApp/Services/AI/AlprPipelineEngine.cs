@@ -210,11 +210,36 @@ namespace AlprWpfApp.Services.AI
                 using var safeCrop = new Mat(inputFrame, new OpenCvSharp.Rect(x, y, w, h));
                 var (rawLines, ocrConf) = _parseqRecognizer.RecognizePlateLines(safeCrop);
                 string cleanPlate = PlatePostProcessor.ProcessRawTextsToCleanPlate(rawLines);
+                bool isValidPlate = PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
+
+                // Nếu OCR lần 1 ra confidence thấp trong khoảng [0.20f..0.35f] hoặc parse ra chuỗi chưa chuẩn:
+                if ((ocrConf < 0.35f || !isValidPlate) && candidate.Score >= 0.40f)
+                {
+                    // Kích hoạt CLAHE phục hồi tương phản cục bộ:
+                    using var enhancedCrop = new Mat();
+                    Cv2.CvtColor(safeCrop, enhancedCrop, ColorConversionCodes.BGR2GRAY);
+                    using var clahe = Cv2.CreateCLAHE(clipLimit: 3.5, tileGridSize: new OpenCvSharp.Size(8, 8));
+                    clahe.Apply(enhancedCrop, enhancedCrop);
+                    using var bgrEnhanced = new Mat();
+                    Cv2.CvtColor(enhancedCrop, bgrEnhanced, ColorConversionCodes.GRAY2BGR);
+
+                    // Chạy lại OCR trên ảnh tăng cường:
+                    var (retryLines, retryConf) = _parseqRecognizer.RecognizePlateLines(bgrEnhanced);
+                    string retryClean = PlatePostProcessor.ProcessRawTextsToCleanPlate(retryLines);
+                    bool retryValid = PlatePostProcessor.IsValidVietnamesePlate(retryClean);
+
+                    if ((retryValid && !isValidPlate) || (retryConf > ocrConf && retryValid == isValidPlate))
+                    {
+                        rawLines = retryLines;
+                        ocrConf = retryConf;
+                        cleanPlate = retryClean;
+                        isValidPlate = retryValid;
+                    }
+                }
 
                 // Lọc bỏ kết quả rác (Gatekeeper):
                 // Tuyệt đối không chấp nhận biển số nếu độ tin cậy quá thấp hoặc sai định dạng:
-                bool isValidPlate = PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
-                if (!isValidPlate || ocrConf < 0.35f || cleanPlate == "TOEO")
+                if (!isValidPlate || ocrConf < 0.25f || cleanPlate == "TOEO")
                 {
                     // Bỏ qua box rác này, tiếp tục duyệt box khác hoặc báo không phát hiện biển hợp lệ
                     continue;
@@ -264,19 +289,23 @@ namespace AlprWpfApp.Services.AI
                         }
 
                         bool hasHyphenL1 = !string.IsNullOrWhiteSpace(line1) && line1.Contains('-');
-                        if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C")
+                        if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$"))
                         {
                             hasHyphenL1 = false;
                         }
 
                         bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
                         bool isCarSquareTop = (!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !cleanL1.StartsWith("99A") && !isMotorNoisePrefix)
-                                              || cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C";
+                                              || cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$");
 
                         bool isMotoPrefix = !isCarSquareTop && (hasHyphenL1 || cleanL1.Length >= 4 || isMotorNoisePrefix)
                             && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(Math.Max(0, cleanL1.Length - 2)));
 
-                        if (!isCarSquareTop && (isMotoPrefix || string.Equals(detectedVehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase)))
+                        bool isTruckPlate = Regex.IsMatch(cleanPlate, @"^\d{2}[CH]-") ||
+                                            Regex.IsMatch(Regex.Replace(cleanPlate, @"[^A-Z0-9Đđ]", ""), @"^\d{2}[CH]\d{5}$") ||
+                                            cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$");
+
+                        if (!isTruckPlate && !isCarSquareTop && (isMotoPrefix || string.Equals(detectedVehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase)))
                         {
                             detectedVehicleType = "Xe máy";
                             detectedPlateColor = "Trắng";
@@ -298,7 +327,7 @@ namespace AlprWpfApp.Services.AI
             totalSw.Stop();
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
 
-            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.35f && bestCleanPlate != "TOEO";
+            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.25f && bestCleanPlate != "TOEO";
             float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;
 
             BitmapSource? cropBmp = null;
