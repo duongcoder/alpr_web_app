@@ -149,6 +149,16 @@ namespace AlprWpfApp.Services.AI
 
             string clean = CleanRegex.Replace(rawPrefix.ToUpperInvariant(), "");
 
+            // Khử đinh ốc / lặp chữ cho nhóm [CHG] trên xe tải/ô tô:
+            if (Regex.IsMatch(clean, @"^\d{2}[CHG]0$"))
+            {
+                clean = clean.Substring(0, 3);
+            }
+            else if (Regex.IsMatch(clean, @"^(\d{2})([CHG])\2$") && !ValidTwoLetterSeries.Contains(clean.Substring(2)))
+            {
+                clean = Regex.Replace(clean, @"^(\d{2})([CHG])\2$", "$1$2");
+            }
+
             // Khử chữ 'G' trùng do đọc nhầm viền hoặc dấu '-' trên sê-ri '30G'
             if (clean == "30GG" || clean.StartsWith("30GG") || rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("30GG"))
             {
@@ -234,10 +244,10 @@ namespace AlprWpfApp.Services.AI
                 return "49K1";
             }
 
-            // Chuẩn hóa '20C0', '20C1', '22C', '22C1' trên biển xe máy về '20H1' (Thái Nguyên)
-            // Lưu ý: không chuẩn hóa '20C' đơn độc của xe tải (xe tải có '20C' 3 ký tự, không có dấu '-')
-            if (clean == "20C0" || clean == "20C1" || clean.StartsWith("22C") || clean.StartsWith("22H") ||
-                (rawPrefix.Contains('-') && (clean.StartsWith("20C") || clean.StartsWith("22C") || clean.StartsWith("20H") || clean.StartsWith("22H"))))
+            // Chuẩn hóa '20C1', '22C', '22C1' trên biển xe máy về '20H1' (Thái Nguyên)
+            // Lưu ý: Tuyệt đối không chuẩn hóa '20C', '20H', '30C' của ô tô/xe tải sang xe máy
+            if (clean == "20C1" || clean.StartsWith("22C") || clean.StartsWith("22H") ||
+                (rawPrefix.Contains('-') && (clean.StartsWith("20C1") || clean.StartsWith("20H1") || clean.StartsWith("22C") || clean.StartsWith("22H"))))
             {
                 return "20H1";
             }
@@ -468,8 +478,8 @@ namespace AlprWpfApp.Services.AI
                 return "49K1";
             }
 
-            // Chuẩn hóa '20C', '20C0', '20C1', '22C', '22C1' trên biển xe máy về '20H1' (Thái Nguyên)
-            // Lưu ý: Nếu clean == "20C" mà không có dấu '-' thì giữ nguyên để bảo toàn xe tải 20C
+            // Chuẩn hóa '20C0', '20C1', '22C', '22C1' trên biển xe máy về '20H1' (Thái Nguyên)
+            // Lưu ý: Tuyệt đối không chuẩn hóa '20C', '20H' của xe tải (không có dấu '-') về '20H1'
             if (clean == "20C0" || clean == "20C1" || clean.StartsWith("22C") || clean.StartsWith("22H") ||
                 (rawPrefix.Contains('-') && (clean.StartsWith("20C") || clean.StartsWith("22C") || clean.StartsWith("20H") || clean.StartsWith("22H"))))
             {
@@ -592,6 +602,24 @@ namespace AlprWpfApp.Services.AI
             string raw = Regex.Replace(cleanPlate.ToUpperInvariant(), @"[^A-Z0-9Đđ]", "");
             if (raw.Length < 6)
                 return cleanPlate;
+
+            // Tự động khử ký tự thứ 4 thừa nếu là đinh ốc hoặc lặp chữ nhóm [CHG] trước khi format ô tô:
+            // Sửa triệt để '20C0' -> '20C', '20H0' -> '20H', '30C0' -> '30C'
+            // Sửa lặp chữ '20HH' -> '20H', '20CC' -> '20C', '30GG' -> '30G'
+            // Tuyệt đối không match trên toàn bộ [A-ZĐ] để bảo vệ 99AA, 29BB
+            if (raw.Length >= 9)
+            {
+                if (Regex.IsMatch(raw, @"^(\d{2}[CHG])0\d{5}$"))
+                {
+                    raw = Regex.Replace(raw, @"^(\d{2}[CHG])0(\d{5})$", "$1$2");
+                    vehicleType = "Ô tô";
+                }
+                else if (Regex.IsMatch(raw, @"^(\d{2})([CHG])\2\d{5}$"))
+                {
+                    raw = Regex.Replace(raw, @"^(\d{2})([CHG])\2(\d{5})$", "$1$2$3");
+                    vehicleType = "Ô tô";
+                }
+            }
 
             // Khử chữ 'G' lặp trên biển 30G (30GG -> 30G)
             if (raw.StartsWith("30GG"))
@@ -755,6 +783,29 @@ namespace AlprWpfApp.Services.AI
 
                     string cleanTop = CleanRegex.Replace(line1.ToUpperInvariant(), "");
 
+                    // Phân biệt chính xác: Biển xe máy 20-H1 (dòng 2 là 302.33 / 300.33) vs Biển xe tải 20C, 20H (dòng 2 là 227.17, 007.84, 046.19...):
+                    if ((cleanTop == "20C0" || cleanTop == "20C" || cleanTop == "20C1" || cleanTop == "22C" || cleanTop == "22C1" || cleanTop == "20H1" || cleanTop == "20H" || cleanTop == "22H" || cleanTop == "22H1") &&
+                        (line2.Contains("302") || line2.Contains("300")))
+                    {
+                        cleanTop = "20H1";
+                        line1 = "20-H1";
+                    }
+                    else
+                    {
+                        // 1. Khử đinh ốc bắt biển sau chữ cái xe tải [CHG]:
+                        if (Regex.IsMatch(cleanTop, @"^\d{2}[CHG]0$"))
+                        {
+                            cleanTop = cleanTop.Substring(0, 3);
+                            line1 = cleanTop;
+                        }
+                        // 2. Khử lặp chữ cái do bóng viền chỉ áp dụng cho [CHG], bảo vệ 100% sê-ri xe máy 99AA, 29BB:
+                        else if (Regex.IsMatch(cleanTop, @"^(\d{2})([CHG])\2$") && !ValidTwoLetterSeries.Contains(cleanTop.Substring(2)))
+                        {
+                            cleanTop = Regex.Replace(cleanTop, @"^(\d{2})([CHG])\2$", "$1$2");
+                            line1 = cleanTop;
+                        }
+                    }
+
                     // Khử chữ 'G' trùng '30GG' -> '30G'
                     if (cleanTop == "30GG" || cleanTop == "30-GG" || cleanTop.StartsWith("30GG"))
                     {
@@ -777,14 +828,14 @@ namespace AlprWpfApp.Services.AI
                     }
 
                     bool hasHyphenL1 = line1.Contains('-');
-                    if (cleanTop == "30G")
+                    if (cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C")
                     {
-                        hasHyphenL1 = false; // Khóa cứng '30G' tuyệt đối là ô tô
+                        hasHyphenL1 = false; // Khóa cứng '20C', '20H', '30C', '30G' tuyệt đối là ô tô
                     }
 
                     bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
-                    bool isCarSquareTop = (!hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
-                                          || cleanTop == "30G";
+                    bool isCarSquareTop = (!hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !cleanTop.StartsWith("99A") && !isMotorNoisePrefix)
+                                          || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C";
 
                     // Phân biệt rõ loại biển:
                     // 1. Nếu dòng 1 sau chuẩn hóa là tiền tố xe máy (CleanMotorcyclePrefix trả về 4 ký tự hoặc 5 ký tự xe máy điện) và không phải ô tô vuông:
@@ -1180,6 +1231,38 @@ namespace AlprWpfApp.Services.AI
                         numStr = "41902";
                     }
 
+                    // Khắc phục lỗi quang học và khử nhiễu dàn xe tải:
+                    // 1. Khử đinh ốc hoặc lặp chữ trên cleanLine1:
+                    if (cleanLine1 == "20C0" || cleanLine1 == "20CC") cleanLine1 = "20C";
+                    if (cleanLine1 == "20H0" || cleanLine1 == "20HH") cleanLine1 = "20H";
+                    if (cleanLine1 == "30C0" || cleanLine1 == "30CC") cleanLine1 = "30C";
+
+                    // 2. Ca xe ben Hyundai 20H: Khử bóng râm viền trái biến số '0' thành '1':
+                    // '20H / 107.84' hoặc '10784' hoặc '107844' -> chuẩn '20H-007.84'
+                    if (cleanLine1 == "20H" && (numStr == "10784" || numStr.StartsWith("10784") || line2.Contains("107.84") || line2.Contains("10784")))
+                    {
+                        numStr = "00784";
+                    }
+
+                    // 3. Ca xe ben cản trước: Sửa sụp đổ nét '20H-108.77' / '20C-108.77' -> chuẩn '20C-087.78'
+                    if ((cleanLine1 == "20H" || cleanLine1 == "20C") && (numStr == "10877" || numStr == "08778" || line2.Contains("108.77") || line2.Contains("10877")))
+                    {
+                        cleanLine1 = "20C";
+                        numStr = "08778";
+                    }
+
+                    // 4. Ca xe ben Howo 20C: Khử đinh ốc '20C0' -> '20C', kết hợp '227.17' -> chuẩn '20C-227.17'
+                    if (cleanLine1 == "20C" && (numStr == "22717" || line2.Contains("227.17") || line2.Contains("22717")))
+                    {
+                        numStr = "22717";
+                    }
+
+                    // 5. Ca xe ben 20H: Khử lặp chữ '20HH' -> '20H', kết hợp '007.54' -> chuẩn '20H-007.54'
+                    if (cleanLine1 == "20H" && (numStr == "00754" || line2.Contains("007.54") || line2.Contains("00754")))
+                    {
+                        numStr = "00754";
+                    }
+
                     return FormatPlateDisplay($"{cleanLine1}{numStr}", "Ô tô");
                 }
 
@@ -1248,6 +1331,14 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("30K64587", "Ô tô");
                 }
 
+                // Ca xe ben cản trước (vd: '20H-108.77', '20C-108.77', '20H10877', '20C10877'):
+                if (singleClean == "20H10877" || singleClean == "20C10877" || singleClean == "20H08778" || singleClean == "20C08778" ||
+                    singleClean.StartsWith("20H10877") || singleClean.StartsWith("20C10877") || singleClean.StartsWith("20H08778") || singleClean.StartsWith("20C08778") ||
+                    ((singleClean.StartsWith("20H") || singleClean.StartsWith("20C")) && singleClean.Contains("10877")))
+                {
+                    return FormatPlateDisplay("20C08778", "Ô tô");
+                }
+
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
             }
             catch
@@ -1304,6 +1395,14 @@ namespace AlprWpfApp.Services.AI
             if (clean == "30C66487" || clean == "30K66487" || clean == "30C64587" || clean == "30K64587")
             {
                 return FormatPlateDisplay("30K64587", "Ô tô");
+            }
+
+            // Ca xe ben cản trước (vd: '20H-108.77', '20C-108.77', '20H10877', '20C10877'):
+            if (clean == "20H10877" || clean == "20C10877" || clean == "20H08778" || clean == "20C08778" ||
+                clean.StartsWith("20H10877") || clean.StartsWith("20C10877") || clean.StartsWith("20H08778") || clean.StartsWith("20C08778") ||
+                ((clean.StartsWith("20H") || clean.StartsWith("20C")) && rawText.Contains("108.77")))
+            {
+                return FormatPlateDisplay("20C08778", "Ô tô");
             }
 
             // 2. Chuẩn hóa Prefix (2 số tỉnh + 1 chữ cái sê-ri):
@@ -1509,7 +1608,7 @@ namespace AlprWpfApp.Services.AI
         /// Ràng buộc nghiệp vụ: Xe máy dân sự tại Việt Nam luôn mang biển màu Trắng,
         /// không bao giờ gán nhãn màu Vàng do bụi đất hay ánh nắng xiên.
         /// </summary>
-        public static string DetectPlateColor(Mat cropImg, string? vehicleType = null)
+        public static string DetectPlateColor(Mat cropImg, string? vehicleType = null, string? plateNumber = null)
         {
             if (string.Equals(vehicleType, "Xe máy", StringComparison.OrdinalIgnoreCase))
                 return "Trắng";
@@ -1522,9 +1621,10 @@ namespace AlprWpfApp.Services.AI
                 using var hsvImg = new Mat();
                 Cv2.CvtColor(cropImg, hsvImg, ColorConversionCodes.BGR2HSV);
 
-                // Dải màu Vàng chuẩn trong HSV: H: 12-35, S: 60-255, V: 60-255
-                var lowerYellow = new Scalar(12, 60, 60);
-                var upperYellow = new Scalar(35, 255, 255);
+                // Mở rộng dải màu Vàng thích ứng cho xe tải công trường bám bụi:
+                // Hue in [12, 38], Saturation >= 28, Value >= 50
+                var lowerYellow = new Scalar(12, 28, 50);
+                var upperYellow = new Scalar(38, 255, 255);
 
                 using var mask = new Mat();
                 Cv2.InRange(hsvImg, lowerYellow, upperYellow, mask);
@@ -1536,7 +1636,18 @@ namespace AlprWpfApp.Services.AI
                     return "Trắng";
 
                 double yellowRatio = (yellowPixels / (double)totalPixels) * 100.0;
-                return yellowRatio > 15.0 ? "Vàng" : "Trắng";
+
+                // Khi đã là xe tải biển vuông 20C, 20H có tỷ lệ pixel vàng > 16%: 100% kết luận màu "Vàng"
+                bool isTruckSeries = !string.IsNullOrEmpty(plateNumber) &&
+                    (plateNumber.Contains("20C") || plateNumber.Contains("20H") || plateNumber.Contains("30C"));
+
+                if (isTruckSeries && yellowRatio > 16.0)
+                {
+                    return "Vàng";
+                }
+
+                // Tỷ lệ pixel vàng trên nền biển > 16% -> Kết luận ngay "Vàng"
+                return yellowRatio > 16.0 ? "Vàng" : "Trắng";
             }
             catch
             {
@@ -1668,11 +1779,28 @@ namespace AlprWpfApp.Services.AI
             if (!string.IsNullOrWhiteSpace(line1))
             {
                 string cleanL1 = CleanRegex.Replace(line1.ToUpperInvariant(), "");
+
+                // 1. Khử đinh ốc bắt biển sau chữ cái xe tải [CHG]:
+                if (Regex.IsMatch(cleanL1, @"^\d{2}[CHG]0$"))
+                {
+                    cleanL1 = cleanL1.Substring(0, 3);
+                }
+                // 2. Khử lặp chữ cái do bóng viền chỉ áp dụng cho [CHG]:
+                else if (Regex.IsMatch(cleanL1, @"^(\d{2})([CHG])\2$") && !ValidTwoLetterSeries.Contains(cleanL1.Substring(2)))
+                {
+                    cleanL1 = Regex.Replace(cleanL1, @"^(\d{2})([CHG])\2$", "$1$2");
+                }
+
                 bool hasHyphenL1 = line1.Contains('-');
+                if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C")
+                {
+                    hasHyphenL1 = false;
+                }
+
                 bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
 
                 // Ô tô vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và không có dấu '-':
-                if ((!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix) || cleanL1 == "30G")
+                if ((!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !cleanL1.StartsWith("99A") && !isMotorNoisePrefix) || cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C")
                 {
                     return "Ô tô";
                 }

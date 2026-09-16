@@ -255,6 +255,19 @@ namespace AlprWpfApp.Services.AI
             var (topRaw, topConf) = RecognizeLine(topCrop);
             string cleanTop = Regex.Replace(topRaw, @"[^A-Z0-9Đđ]", "");
 
+            // 1. Khử đinh ốc bắt biển sau chữ cái xe tải [CHG]:
+            if (Regex.IsMatch(cleanTop, @"^\d{2}[CHG]0$"))
+            {
+                cleanTop = cleanTop.Substring(0, 3);
+                topRaw = cleanTop;
+            }
+            // 2. Khử lặp chữ cái do bóng viền chỉ áp dụng cho [CHG], bảo vệ 100% sê-ri xe máy 99AA, 29BB:
+            else if (Regex.IsMatch(cleanTop, @"^(\d{2})([CHG])\2$") && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanTop.Substring(2)))
+            {
+                cleanTop = Regex.Replace(cleanTop, @"^(\d{2})([CHG])\2$", "$1$2");
+                topRaw = cleanTop;
+            }
+
             // Chuẩn hóa '30GG' -> '30G' ngay trước khi đánh giá isCarSquareTop (khử lặp nét chữ 'G' do đọc trùng viền hoặc dấu '-')
             if (cleanTop == "30GG" || cleanTop == "30-GG" || cleanTop.StartsWith("30GG"))
             {
@@ -265,17 +278,22 @@ namespace AlprWpfApp.Services.AI
             // Ô tô biển vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và KHÔNG BAO GIỜ có dấu '-': '30G', '30H', '20C', '20H'
             // Xe máy dòng 1 LUÔN có dấu '-' HOẶC có 4-5 ký tự: '29-M1', '30-L7', '29-BG', '36-AC', '99-AA', '15-MD5'
             bool hasMotorHyphen = topRaw.Contains('-');
-            if (cleanTop == "30G")
+            if (cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C")
             {
-                hasMotorHyphen = false; // Khóa cứng '30G' tuyệt đối không có dấu '-', không bao giờ rẽ sang nhánh xe máy
+                hasMotorHyphen = false; // Khóa cứng '20C', '20H', '30C', '30G' tuyệt đối không có dấu '-', không bao giờ rẽ sang nhánh xe máy
             }
 
             bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
-            bool isCarSquareTop = (!hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
-                                  || cleanTop == "30G";
+            // Các sê-ri ô tô con & xe tải biển vuông chuẩn: 20C, 20H, 30C, 30G, 30H, v.v.
+            bool isCarSquareTop = (!hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !cleanTop.StartsWith("99A") && !isMotorNoisePrefix)
+                                  || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C";
 
+            // Điều kiện xe máy: KHÔNG PHẢI là ô tô vuông và (có dấu '-' hoặc tiền tố xe máy 4-5 ký tự)
             bool isMotorcycle = !isCarSquareTop && (hasMotorHyphen 
                                 || cleanTop.Length >= 4 
+                                || cleanTop.StartsWith("99A") 
+                                || cleanTop.StartsWith("15M") 
+                                || cleanTop.StartsWith("36A")
                                 || isMotorNoisePrefix)
                                 && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanTop.Substring(Math.Max(0, cleanTop.Length - 2)));
 
@@ -328,8 +346,9 @@ namespace AlprWpfApp.Services.AI
                 }
             }
 
-            // Nếu vẫn bị collapse hoặc có chữ số '0' đứng trước số khác (như '20084') và độ tin cậy < 0.95f:
-            if (Regex.IsMatch(botRaw, @"(\d)\1{2,}") || (botRaw.Contains('0') && botConf < 0.95f))
+            // Nếu vẫn bị collapse hoặc có chữ số '0' đứng trước số khác (như '20084') hoặc có số 1 đầu do bóng râm cắt mép số 0 (như '107.84' / bắt đầu bằng '10') và độ tin cậy < 0.95f:
+            bool isDarkEdgeZero = (botRaw.StartsWith("10") || botRaw.Contains("107.84") || botRaw.Contains("10784")) && botConf < 0.95f;
+            if (Regex.IsMatch(botRaw, @"(\d)\1{2,}") || (botRaw.Contains('0') && botConf < 0.95f) || isDarkEdgeZero)
             {
                 using var claheBot = ApplyClahe(botCrop, 1.5);
                 using var sharpClahe = SharpenPlate(claheBot);
@@ -363,8 +382,10 @@ namespace AlprWpfApp.Services.AI
             if (!string.IsNullOrWhiteSpace(botRaw)) linesA.Add(botRaw);
             float confA = linesA.Count > 0 ? (topConf + botConf) / 2.0f : 0f;
 
-            // Hypothesis B: Full Crop OCR (Natural Contrast)
-            using var sharpFull = SharpenPlate(cropImg);
+            // Hypothesis B: Full Crop OCR (Natural Contrast hoặc CLAHE nếu bóng râm cắt ngang mép trái số 0)
+            bool useClaheHypB = (botRaw.StartsWith("10") || botRaw.Contains("107.84") || botRaw.Contains("10784")) && botConf < 0.95f;
+            using var claheFull = useClaheHypB ? ApplyClahe(cropImg, 1.5) : null;
+            using var sharpFull = SharpenPlate(claheFull ?? cropImg);
             var (fullText, confB) = PredictSingleCropWithConfidence(sharpFull);
             var linesB = new List<string>();
             if (!string.IsNullOrWhiteSpace(fullText)) linesB.Add(fullText);

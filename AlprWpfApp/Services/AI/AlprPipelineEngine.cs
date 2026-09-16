@@ -226,7 +226,7 @@ namespace AlprWpfApp.Services.AI
                     {
                         // Khóa cứng: Biển dài 1 dòng (aspectRatio > 1.8) luôn luôn là Ô tô tại Việt Nam
                         detectedVehicleType = "Ô tô";
-                        detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
+                        detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType, cleanPlate);
                     }
                     else
                     {
@@ -234,9 +234,27 @@ namespace AlprWpfApp.Services.AI
 
                         // Phân loại phương tiện và màu biển cho biển 2 dòng:
                         string cleanL1 = !string.IsNullOrWhiteSpace(line1) ? Regex.Replace(line1, @"[^A-Z0-9Đđ]", "") : string.Empty;
+
+                        // 1. Khử đinh ốc bắt biển sau chữ cái xe tải [CHG]:
+                        if (Regex.IsMatch(cleanL1, @"^\d{2}[CHG]0$"))
+                        {
+                            cleanL1 = cleanL1.Substring(0, 3);
+                        }
+                        // 2. Khử lặp chữ cái do bóng viền chỉ áp dụng cho [CHG]:
+                        else if (Regex.IsMatch(cleanL1, @"^(\d{2})([CHG])\2$") && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(2)))
+                        {
+                            cleanL1 = Regex.Replace(cleanL1, @"^(\d{2})([CHG])\2$", "$1$2");
+                        }
+
                         bool hasHyphenL1 = !string.IsNullOrWhiteSpace(line1) && line1.Contains('-');
+                        if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C")
+                        {
+                            hasHyphenL1 = false;
+                        }
+
                         bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
-                        bool isCarSquareTop = !hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+                        bool isCarSquareTop = (!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !cleanL1.StartsWith("99A") && !isMotorNoisePrefix)
+                                              || cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C";
 
                         bool isMotoPrefix = !isCarSquareTop && (hasHyphenL1 || cleanL1.Length >= 4 || isMotorNoisePrefix)
                             && !PlatePostProcessor.ValidTwoLetterSeries.Contains(cleanL1.Substring(Math.Max(0, cleanL1.Length - 2)));
@@ -249,7 +267,7 @@ namespace AlprWpfApp.Services.AI
                         else
                         {
                             detectedVehicleType = "Ô tô";
-                            detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType);
+                            detectedPlateColor = PlatePostProcessor.DetectPlateColor(safeCrop, detectedVehicleType, cleanPlate);
                         }
                     }
 
