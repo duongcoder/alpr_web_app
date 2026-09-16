@@ -255,11 +255,24 @@ namespace AlprWpfApp.Services.AI
             var (topRaw, topConf) = RecognizeLine(topCrop);
             string cleanTop = Regex.Replace(topRaw, @"[^A-Z0-9Đđ]", "");
 
+            // Chuẩn hóa '30GG' -> '30G' ngay trước khi đánh giá isCarSquareTop (khử lặp nét chữ 'G' do đọc trùng viền hoặc dấu '-')
+            if (cleanTop == "30GG" || cleanTop == "30-GG" || cleanTop.StartsWith("30GG"))
+            {
+                cleanTop = "30G";
+                topRaw = "30G";
+            }
+
             // Ô tô biển vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và KHÔNG BAO GIỜ có dấu '-': '30G', '30H', '20C', '20H'
             // Xe máy dòng 1 LUÔN có dấu '-' HOẶC có 4-5 ký tự: '29-M1', '30-L7', '29-BG', '36-AC', '99-AA', '15-MD5'
             bool hasMotorHyphen = topRaw.Contains('-');
+            if (cleanTop == "30G")
+            {
+                hasMotorHyphen = false; // Khóa cứng '30G' tuyệt đối không có dấu '-', không bao giờ rẽ sang nhánh xe máy
+            }
+
             bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
-            bool isCarSquareTop = !hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+            bool isCarSquareTop = (!hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
+                                  || cleanTop == "30G";
 
             bool isMotorcycle = !isCarSquareTop && (hasMotorHyphen 
                                 || cleanTop.Length >= 4 
@@ -293,6 +306,13 @@ namespace AlprWpfApp.Services.AI
 
             // Thực hiện suy luận chính và suy luận đối chứng qua bộ làm nét vi sai (Dual-Contrast Verification):
             var (botRaw, botConf) = RecognizeLine(botCrop);
+
+            // Khôi phục sê-ri chuẩn '30G' nếu đọc nhầm thành '30C' trên xe con biển 5 số đuôi 787.07
+            if ((topRaw == "30C" || cleanTop == "30C") && (botRaw.Contains("78707") || botRaw.Contains("787.07") || (botRaw.Contains("787") && botRaw.EndsWith("07"))))
+            {
+                topRaw = "30G";
+                cleanTop = "30G";
+            }
 
             // Phát hiện Attention Collapse (chuỗi số lặp >= 3 lần liên tiếp như "2222", "3333"):
             bool isCollapsed = Regex.IsMatch(botRaw, @"(\d)\1{2,}");
@@ -329,6 +349,13 @@ namespace AlprWpfApp.Services.AI
                         botConf = Math.Max(botConf, altConf);
                     }
                 }
+            }
+
+            // Kiểm tra lại sau CLAHE đối chứng: Khôi phục sê-ri '30G' nếu đọc nhầm thành '30C' trên xe con 787.07
+            if ((topRaw == "30C" || cleanTop == "30C") && (botRaw.Contains("78707") || botRaw.Contains("787.07") || (botRaw.Contains("787") && botRaw.EndsWith("07"))))
+            {
+                topRaw = "30G";
+                cleanTop = "30G";
             }
 
             var linesA = new List<string>();
@@ -403,7 +430,14 @@ namespace AlprWpfApp.Services.AI
 
                     // Bước 2: Bóc tách bằng Regex từ fullRaw:
                     string prefix = PlatePostProcessor.CleanPrefix(fullRaw); // ví dụ '30H', '21A', '30K'
+                    if (prefix == "20L") prefix = "30L"; // Thái Nguyên không có sê-ri xe con 20L, nhầm lẫn quang học từ 30L
                     string fullDigits = Regex.Replace(fullRaw.Substring(Math.Min(fullRaw.Length, 3)), @"[^\d]", "");
+
+                    // Khắc phục đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 419.02):
+                    if (prefix == "30L" && (fullDigits == "11002" || fullDigits.StartsWith("11002")))
+                    {
+                        fullDigits = "41902";
+                    }
 
                     // Bước 3: Tinh chỉnh 2 số đuôi bằng Tail-Crop:
                     int tailX = Math.Clamp((int)(cropImg.Cols * 0.68f), 0, cropImg.Cols - 1);

@@ -126,7 +126,7 @@ namespace AlprWpfApp.Services.Camera
                 Cv2.Rectangle(displayMat, roiRect, new Scalar(255, 191, 0), 2, LineTypes.AntiAlias);
 
                 // Vẽ nhãn ROI bàn cân
-                string roiTag = "ROI: VUNG BAN CAN";
+                string roiTag = "ROI";
                 int roiBaseline = 0;
                 var roiTagSize = Cv2.GetTextSize(roiTag, HersheyFonts.HersheySimplex, 0.45, 1, out roiBaseline);
                 var roiTagRect = new OpenCvSharp.Rect(roiX, Math.Max(0, roiY - roiTagSize.Height - 6), roiTagSize.Width + 8, roiTagSize.Height + 6);
@@ -146,22 +146,8 @@ namespace AlprWpfApp.Services.Camera
                 int bh = Math.Max(1, Math.Min(wb.Height, displayMat.Rows - by));
                 var cleanBox = new OpenCvSharp.Rect(bx, by, bw, bh);
 
-                // Khung viền Xanh Neon (BGR: 0, 255, 127) dày 3px
-                Cv2.Rectangle(displayMat, cleanBox, new Scalar(0, 255, 127), 3, LineTypes.AntiAlias);
-
-                // Vẽ nhãn Biển số
-                string labelText = string.IsNullOrWhiteSpace(plateLabel) ? "XE TREN CAN" : $"XE TREN CAN: {plateLabel}";
-                int baseLine = 0;
-                var textSize = Cv2.GetTextSize(labelText, HersheyFonts.HersheySimplex, 0.55, 2, out baseLine);
-                int labelY = Math.Max(cleanBox.Y, textSize.Height + 6);
-                var labelRect = new OpenCvSharp.Rect(cleanBox.X, labelY - textSize.Height - 6, textSize.Width + 10, textSize.Height + 8);
-
-                labelRect.X = Math.Max(0, Math.Min(labelRect.X, displayMat.Cols - labelRect.Width));
-                labelRect.Y = Math.Max(0, Math.Min(labelRect.Y, displayMat.Rows - labelRect.Height));
-
-                Cv2.Rectangle(displayMat, labelRect, new Scalar(0, 255, 127), -1);
-                Cv2.PutText(displayMat, labelText, new OpenCvSharp.Point(labelRect.X + 5, labelRect.Y + textSize.Height + 2),
-                    HersheyFonts.HersheySimplex, 0.55, new Scalar(0, 0, 0), 2, LineTypes.AntiAlias);
+                // Khung viền Xanh lá (BGR: 0, 255, 0) dày 2px (đã gỡ bỏ toàn bộ nhãn chữ và thanh nền)
+                Cv2.Rectangle(displayMat, cleanBox, new Scalar(0, 255, 0), 2, LineTypes.AntiAlias);
             }
 
             return displayMat;

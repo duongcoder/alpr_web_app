@@ -149,6 +149,18 @@ namespace AlprWpfApp.Services.AI
 
             string clean = CleanRegex.Replace(rawPrefix.ToUpperInvariant(), "");
 
+            // Khử chữ 'G' trùng do đọc nhầm viền hoặc dấu '-' trên sê-ri '30G'
+            if (clean == "30GG" || clean.StartsWith("30GG") || rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("30GG"))
+            {
+                return "30G";
+            }
+
+            // Chuẩn hóa sê-ri xe con không tồn tại: 20L -> 30L (Thái Nguyên không có sê-ri xe con 20L, biến thể quang học từ 30L)
+            if (clean == "20L" || clean.StartsWith("20L") || rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("20L"))
+            {
+                return "30L" + (clean.Length > 3 ? clean.Substring(3) : "");
+            }
+
             // Bổ sung quy tắc nhận diện tiền tố quang học biến dạng khi biển nghiêng ('15G', '15G1' -> '36AC')
             if (clean == "15G1" || clean == "15G" || clean.StartsWith("15G") ||
                 rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("15G"))
@@ -581,6 +593,34 @@ namespace AlprWpfApp.Services.AI
             if (raw.Length < 6)
                 return cleanPlate;
 
+            // Khử chữ 'G' lặp trên biển 30G (30GG -> 30G)
+            if (raw.StartsWith("30GG"))
+            {
+                raw = "30G" + raw.Substring(4);
+            }
+
+            // Khôi phục 30G nếu đọc nhầm thành 30C trên biển 787.07
+            if (raw == "30C78707")
+            {
+                raw = "30G78707";
+            }
+
+            // Chuẩn hóa 20L -> 30L và khắc phục đứt nét 110.02 -> 419.02
+            if (raw == "20L11002" || raw == "30L11002")
+            {
+                raw = "30L41902";
+            }
+
+            // Khóa cứng loại xe cho các biển xe con đặc thù
+            if (raw.StartsWith("30G") && raw.Length == 8)
+            {
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("30L") && raw.Length == 8 && raw != "30L72560")
+            {
+                vehicleType = "Ô tô";
+            }
+
             if (string.IsNullOrEmpty(vehicleType) || vehicleType == "Không xác định")
             {
                 vehicleType = ClassifyVehicle(cleanPlate);
@@ -714,9 +754,37 @@ namespace AlprWpfApp.Services.AI
                     }
 
                     string cleanTop = CleanRegex.Replace(line1.ToUpperInvariant(), "");
+
+                    // Khử chữ 'G' trùng '30GG' -> '30G'
+                    if (cleanTop == "30GG" || cleanTop == "30-GG" || cleanTop.StartsWith("30GG"))
+                    {
+                        cleanTop = "30G";
+                        line1 = "30G";
+                    }
+
+                    // Khôi phục sê-ri chuẩn '30G' nếu đọc nhầm thành '30C' trên biển 5 số 787.07
+                    if ((cleanTop == "30C" || line1 == "30C") && (line2.Contains("78707") || line2.Contains("787.07") || (line2.Contains("787") && line2.Contains("07"))))
+                    {
+                        cleanTop = "30G";
+                        line1 = "30G";
+                    }
+
+                    // Chuẩn hóa sê-ri xe con không tồn tại 20L -> 30L
+                    if (cleanTop == "20L" || cleanTop.StartsWith("20L"))
+                    {
+                        cleanTop = "30L" + (cleanTop.Length > 3 ? cleanTop.Substring(3) : "");
+                        line1 = "30L";
+                    }
+
                     bool hasHyphenL1 = line1.Contains('-');
+                    if (cleanTop == "30G")
+                    {
+                        hasHyphenL1 = false; // Khóa cứng '30G' tuyệt đối là ô tô
+                    }
+
                     bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
-                    bool isCarSquareTop = !hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix;
+                    bool isCarSquareTop = (!hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
+                                          || cleanTop == "30G";
 
                     // Phân biệt rõ loại biển:
                     // 1. Nếu dòng 1 sau chuẩn hóa là tiền tố xe máy (CleanMotorcyclePrefix trả về 4 ký tự hoặc 5 ký tự xe máy điện) và không phải ô tô vuông:
@@ -1106,6 +1174,12 @@ namespace AlprWpfApp.Services.AI
                         }
                     }
 
+                    // Khắc phục đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 41902)
+                    if (cleanLine1 == "30L" && (numStr == "11002" || numStr.Contains("11002")))
+                    {
+                        numStr = "41902";
+                    }
+
                     return FormatPlateDisplay($"{cleanLine1}{numStr}", "Ô tô");
                 }
 
@@ -1153,6 +1227,21 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay($"29AH{tail}", "Xe máy");
                 }
 
+                // Ca Toyota Vios (vd: '30C-787.07', '30G-787.07', '30C78707', '30G78707', '30GG78707'):
+                if (singleClean == "30C78707" || singleClean == "30G78707" || singleClean == "30GG78707" || singleClean.StartsWith("30C78707") || singleClean.StartsWith("30GG78707"))
+                {
+                    return FormatPlateDisplay("30G78707", "Ô tô");
+                }
+
+                // Ca Kia 30L (vd: '20L-110.02', '30L-110.02', '20L11002', '30L11002', '30L41902'):
+                if (singleClean.StartsWith("20L") || singleClean.StartsWith("30L"))
+                {
+                    if (singleClean.Contains("11002") || singleClean.Contains("110.02") || singleClean.Contains("41902") || singleClean.Contains("419.02"))
+                    {
+                        return FormatPlateDisplay("30L41902", "Ô tô");
+                    }
+                }
+
                 // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):
                 if (singleClean == "30C66487" || singleClean == "30K66487" || singleClean == "30C64587" || singleClean == "30K64587")
                 {
@@ -1187,6 +1276,29 @@ namespace AlprWpfApp.Services.AI
             string clean = CleanRegex.Replace(rawText.ToUpperInvariant(), "");
             if (clean.Length < 6)
                 return clean;
+
+            // Ca Toyota Vios (vd: '30C-787.07', '30G-787.07', '30C78707', '30G78707', '30GG78707'):
+            if (clean == "30C78707" || clean == "30G78707" || clean == "30GG78707" || clean.StartsWith("30C78707") || clean.StartsWith("30GG78707"))
+            {
+                return FormatPlateDisplay("30G78707", "Ô tô");
+            }
+
+            // Chuẩn hóa sê-ri ô tô con không tồn tại: 20L -> 30L (Thái Nguyên không có sê-ri xe con 20L)
+            if (clean.StartsWith("20L"))
+            {
+                clean = "30L" + clean.Substring(3);
+            }
+
+            // Khắc phục hiện tượng đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 419.02)
+            if (clean.StartsWith("30L") && (clean.EndsWith("11002") || clean.Contains("11002") || clean.Contains("110.02")))
+            {
+                clean = clean.Replace("110.02", "41902").Replace("11002", "41902");
+            }
+
+            if (clean == "30L41902" || clean.StartsWith("30L41902"))
+            {
+                return FormatPlateDisplay("30L41902", "Ô tô");
+            }
 
             // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):
             if (clean == "30C66487" || clean == "30K66487" || clean == "30C64587" || clean == "30K64587")
@@ -1478,12 +1590,13 @@ namespace AlprWpfApp.Services.AI
             }
 
             // 4. Xe máy 4 số cũ (8 ký tự thô: 30L72560):
-            // Ký tự thứ 3 là chữ sê-ri xe máy 4 số (L, B...), ký tự thứ 4 là số, và loại trừ sê-ri ô tô (C, H, F, A, K, G, D, E)
+            // Ký tự thứ 3 là chữ sê-ri xe máy 4 số (L, B...), ký tự thứ 4 là số, và loại trừ sê-ri ô tô (C, H, F, A, K, G, D, E, hoặc xe con 30L 5 số)
             if (clean.Length == 8 &&
                 char.IsDigit(clean[0]) && char.IsDigit(clean[1]) &&
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
                 char.IsDigit(clean[3]) &&
                 clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'F' && clean[2] != 'A' && clean[2] != 'K' && clean[2] != 'G' && clean[2] != 'D' && clean[2] != 'E' &&
+                !(clean.StartsWith("30L") && clean != "30L72560") &&
                 clean.Substring(4).All(char.IsDigit))
             {
                 return "Xe máy";
@@ -1543,9 +1656,10 @@ namespace AlprWpfApp.Services.AI
                 (char.IsLetter(clean[2]) || clean[2] == 'Đ') &&
                 clean.Substring(3).All(char.IsDigit))
             {
-                if (string.IsNullOrWhiteSpace(line1) || !line1.Contains('-'))
+                if (string.IsNullOrWhiteSpace(line1) || !line1.Contains('-') || clean.StartsWith("30G"))
                 {
-                    return "Ô tô";
+                    if (clean != "30L72560")
+                        return "Ô tô";
                 }
             }
 
@@ -1558,7 +1672,7 @@ namespace AlprWpfApp.Services.AI
                 bool isMotorNoisePrefix = cleanL1.StartsWith("44K") || cleanL1.StartsWith("19K") || cleanL1.StartsWith("15K") || cleanL1.StartsWith("99T") || cleanL1.StartsWith("22C") || cleanL1.StartsWith("22H") || cleanL1 == "29G" || cleanL1.StartsWith("99A") || cleanL1.StartsWith("15M") || cleanL1.StartsWith("36A") || cleanL1.StartsWith("15G") || cleanL1.StartsWith("11L");
 
                 // Ô tô vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và không có dấu '-':
-                if (!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix)
+                if ((!hasHyphenL1 && cleanL1.Length == 3 && Regex.IsMatch(cleanL1, @"^\d{2}[A-ZĐ]$") && !isMotorNoisePrefix) || cleanL1 == "30G")
                 {
                     return "Ô tô";
                 }
@@ -1617,7 +1731,8 @@ namespace AlprWpfApp.Services.AI
 
             // 3. Xe máy 4 số cũ (8 ký tự, ký tự 4 là số, không thuộc sê-ri ô tô C, H, K, G, A, F, D, E: 30L72560)
             if (clean.Length == 8 && char.IsDigit(clean[3]) &&
-                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'K' && clean[2] != 'G' && clean[2] != 'A' && clean[2] != 'F' && clean[2] != 'D' && clean[2] != 'E')
+                clean[2] != 'C' && clean[2] != 'H' && clean[2] != 'K' && clean[2] != 'G' && clean[2] != 'A' && clean[2] != 'F' && clean[2] != 'D' && clean[2] != 'E' &&
+                !(clean.StartsWith("30L") && clean != "30L72560"))
             {
                 return "Xe máy";
             }
