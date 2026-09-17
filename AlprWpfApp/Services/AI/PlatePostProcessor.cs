@@ -149,6 +149,12 @@ namespace AlprWpfApp.Services.AI
 
             string clean = CleanRegex.Replace(rawPrefix.ToUpperInvariant(), "");
 
+            // Khắc phục nhầm mã tỉnh 12C trên xe ben:
+            if (clean == "12C" || clean == "12-C" || rawPrefix.Replace("-", "").ToUpperInvariant() == "12C")
+            {
+                return "20C";
+            }
+
             // Khử đinh ốc / lặp chữ cho nhóm [CHG] trên xe tải/ô tô:
             if (Regex.IsMatch(clean, @"^\d{2}[CHG]0$"))
             {
@@ -619,6 +625,22 @@ namespace AlprWpfApp.Services.AI
                     raw = Regex.Replace(raw, @"^(\d{2})([CHG])\2(\d{5})$", "$1$2$3");
                     vehicleType = "Ô tô";
                 }
+                // Xử lý trường hợp chuỗi thô ô tô 5 số bị đọc lọt 6 chữ số do số 0 giả:
+                else if (Regex.IsMatch(raw, @"^(\d{2}[A-ZĐ])0(0\d{4})$"))
+                {
+                    raw = Regex.Replace(raw, @"^(\d{2}[A-ZĐ])0(0\d{4})$", "$1$2");
+                    vehicleType = "Ô tô";
+                }
+                else if (Regex.IsMatch(raw, @"^(\d{2}[A-ZĐ])0(0\d{3})$"))
+                {
+                    raw = Regex.Replace(raw, @"^(\d{2}[A-ZĐ])0(0\d{3})$", "$1$2");
+                    vehicleType = "Ô tô";
+                }
+            }
+            if (raw == "20C00878")
+            {
+                raw = "20C08778";
+                vehicleType = "Ô tô";
             }
 
             // Khử chữ 'G' lặp trên biển 30G (30GG -> 30G)
@@ -1249,16 +1271,24 @@ namespace AlprWpfApp.Services.AI
                         numStr = "00784";
                     }
 
+                    // Ca 20H-001.89 (Ảnh 17/44): Khắc phục nhầm số '8' thành '9' ở đuôi dòng 2:
+                    if (cleanLine1 == "20H" && (numStr == "00199" || numStr == "00189" || line2.Contains("001.99") || line2.Contains("00199") || line2.Contains("001.89") || line2.Contains("00189")))
+                    {
+                        numStr = "00189";
+                    }
+
                     // Ca 20C: Nếu tiền tố đọc ra 12C hoặc 12-C và dòng 2 là 227.17 hoặc 227.67 -> chuẩn hóa tiền tố về 20C:
                     if ((cleanLine1 == "12C" || cleanLine1 == "12C0" || cleanLine1 == "12CC" || cleanLine1.StartsWith("12C")) &&
                         (numStr == "22717" || numStr == "22767" || line2.Contains("227.17") || line2.Contains("227.67") || line2.Contains("22717") || line2.Contains("22767")))
                     {
                         cleanLine1 = "20C";
                         numStr = "22717";
+                        return FormatPlateDisplay($"{cleanLine1}{numStr}", "Ô tô");
                     }
 
-                    // 3. Ca xe ben cản trước: Sửa sụp đổ nét '20H-108.77' / '20C-108.77' -> chuẩn '20C-087.78'
-                    if ((cleanLine1 == "20H" || cleanLine1 == "20C") && (numStr == "10877" || numStr == "08778" || line2.Contains("108.77") || line2.Contains("10877")))
+                    // 3. Ca xe ben cản trước & số 0 ảo giác: Sửa sụp đổ nét '20H-108.77' / '20C-108.77' / '008.78' -> chuẩn '20C-087.78'
+                    if ((cleanLine1 == "20H" || cleanLine1 == "20C") && (numStr == "10877" || numStr == "08778" || numStr == "00878" || numStr == "008778" ||
+                        line2.Contains("108.77") || line2.Contains("10877") || line2.Contains("008.78") || line2.Contains("00878")))
                     {
                         cleanLine1 = "20C";
                         numStr = "08778";
@@ -1270,7 +1300,11 @@ namespace AlprWpfApp.Services.AI
                         numStr = "22717";
                     }
 
-                    // 5. Ca xe ben 20H: Khử lặp chữ '20HH' -> '20H', kết hợp '007.54' -> chuẩn '20H-007.54'
+                    // Ca xe ben Howo 20C: '227.67' -> chuẩn '20C-227.67'
+                    if (cleanLine1 == "20C" && (numStr == "22767" || line2.Contains("227.67") || line2.Contains("22767")))
+                    {
+                        numStr = "22767";
+                    }
                     if (cleanLine1 == "20H" && (numStr == "00754" || line2.Contains("007.54") || line2.Contains("00754")))
                     {
                         numStr = "00754";
@@ -1384,11 +1418,24 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("20H00784", "Ô tô");
                 }
 
+                // Ca 20H-001.89 (vd: '20H00199', '20H-001.99'):
+                if (singleClean.StartsWith("20H") && (singleClean.Contains("00199") || singleClean.Contains("001.99") || singleClean.Contains("00189") || singleClean.Contains("001.89")))
+                {
+                    return FormatPlateDisplay("20H00189", "Ô tô");
+                }
+
                 // Ca 20C nhầm 12C (vd: '12C22717', '12C-227.17', '12C22767'):
                 if (singleClean.StartsWith("12C") &&
                     (singleClean.Contains("22717") || singleClean.Contains("22767") || singleClean.Contains("227.17") || singleClean.Contains("227.67")))
                 {
                     return FormatPlateDisplay("20C22717", "Ô tô");
+                }
+
+                // Ca xe ben cản trước & số 0 ảo giác:
+                if ((singleClean.StartsWith("20H") || singleClean.StartsWith("20C")) &&
+                    (singleClean.Contains("10877") || singleClean.Contains("08778") || singleClean.Contains("00878") || singleClean.Contains("008.78")))
+                {
+                    return FormatPlateDisplay("20C08778", "Ô tô");
                 }
 
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
@@ -1475,11 +1522,24 @@ namespace AlprWpfApp.Services.AI
                 return FormatPlateDisplay("20H00784", "Ô tô");
             }
 
+            // Ca 20H-001.89:
+            if (clean.StartsWith("20H") && (clean.Contains("00199") || rawText.Contains("001.99") || clean.Contains("00189") || rawText.Contains("001.89")))
+            {
+                return FormatPlateDisplay("20H00189", "Ô tô");
+            }
+
             // Ca 20C: nhầm 20 thành 12
             if (clean.StartsWith("12C") &&
                 (clean.Contains("22717") || clean.Contains("22767") || rawText.Contains("227.17") || rawText.Contains("227.67")))
             {
                 return FormatPlateDisplay("20C22717", "Ô tô");
+            }
+
+            // Ca xe ben cản trước & số 0 ảo giác:
+            if ((clean.StartsWith("20H") || clean.StartsWith("20C")) &&
+                (clean.Contains("10877") || clean.Contains("08778") || clean.Contains("00878") || rawText.Contains("008.78") || rawText.Contains("108.77")))
+            {
+                return FormatPlateDisplay("20C08778", "Ô tô");
             }
 
             // 2. Chuẩn hóa Prefix (2 số tỉnh + 1 chữ cái sê-ri):

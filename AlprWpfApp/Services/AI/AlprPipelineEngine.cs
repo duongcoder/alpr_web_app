@@ -118,12 +118,12 @@ namespace AlprWpfApp.Services.AI
                 if (allDetectedBoxes.Count == 0 && roiW >= 64 && roiH >= 64)
                 {
                     using var rawRoi = new Mat(inputFrame, new OpenCvSharp.Rect(roiX, roiY, roiW, roiH));
-                    // Tăng cường tương phản/độ sáng: CLAHE clipLimit = 3.0f, Gamma = 1.3f
-                    using var claheRoi = ParseqRecognizer.ApplyClahe(rawRoi, 3.0);
-                    using var gammaRoi = ApplyGamma(claheRoi, 1.3f);
+                    // Tăng cường tương phản/độ sáng: CLAHE clipLimit = 4.0f, Gamma = 1.4f
+                    using var claheRoi = ParseqRecognizer.ApplyClahe(rawRoi, 4.0);
+                    using var gammaRoi = ApplyGamma(claheRoi, 1.4f);
 
-                    // Hạ ngưỡng YOLO confThreshold xuống 0.15f để bắt trọn biển số nằm dưới gầm xe ben
-                    var pass2Detections = _yoloDetector.Detect(gammaRoi, 0.15f);
+                    // Hạ ngưỡng YOLO confThreshold xuống 0.10f để bắt trọn biển số nằm dưới gầm xe ben
+                    var pass2Detections = _yoloDetector.Detect(gammaRoi, 0.10f);
                     foreach (var det in pass2Detections)
                     {
                         var globalRect = new OpenCvSharp.Rect(
@@ -213,12 +213,12 @@ namespace AlprWpfApp.Services.AI
                 bool isValidPlate = PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
 
                 // Nếu OCR lần 1 ra confidence thấp trong khoảng [0.20f..0.35f] hoặc parse ra chuỗi chưa chuẩn:
-                if ((ocrConf < 0.35f || !isValidPlate) && candidate.Score >= 0.40f)
+                if ((ocrConf < 0.35f || !isValidPlate) && candidate.Score >= 0.20f)
                 {
                     // Kích hoạt CLAHE phục hồi tương phản cục bộ:
                     using var enhancedCrop = new Mat();
                     Cv2.CvtColor(safeCrop, enhancedCrop, ColorConversionCodes.BGR2GRAY);
-                    using var clahe = Cv2.CreateCLAHE(clipLimit: 3.5, tileGridSize: new OpenCvSharp.Size(8, 8));
+                    using var clahe = Cv2.CreateCLAHE(clipLimit: 4.0, tileGridSize: new OpenCvSharp.Size(8, 8));
                     clahe.Apply(enhancedCrop, enhancedCrop);
                     using var bgrEnhanced = new Mat();
                     Cv2.CvtColor(enhancedCrop, bgrEnhanced, ColorConversionCodes.GRAY2BGR);
@@ -238,8 +238,8 @@ namespace AlprWpfApp.Services.AI
                 }
 
                 // Lọc bỏ kết quả rác (Gatekeeper):
-                // Tuyệt đối không chấp nhận biển số nếu độ tin cậy quá thấp hoặc sai định dạng:
-                if (!isValidPlate || ocrConf < 0.25f || cleanPlate == "TOEO")
+                // Chấp nhận mọi biển hợp lệ nếu confidence >= 0.20f; loại bỏ rác vô nghĩa:
+                if (!isValidPlate || ocrConf < 0.20f || cleanPlate == "TOEO")
                 {
                     // Bỏ qua box rác này, tiếp tục duyệt box khác hoặc báo không phát hiện biển hợp lệ
                     continue;
@@ -327,7 +327,7 @@ namespace AlprWpfApp.Services.AI
             totalSw.Stop();
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
 
-            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.25f && bestCleanPlate != "TOEO";
+            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.20f && bestCleanPlate != "TOEO";
             float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;
 
             BitmapSource? cropBmp = null;

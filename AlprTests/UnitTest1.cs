@@ -1885,5 +1885,57 @@ namespace AlprTests
             Assert.Equal("30A-244.73", PlatePostProcessor.CleanLongPlate("30A-244.73"));
             Assert.Equal("30K-645.87", PlatePostProcessor.CleanLongPlate("30K-645.87"));
         }
+
+        [Fact]
+        public void TestFinalTruckEnhancements_Issue5Cases()
+        {
+            // 1. KHẮC PHỤC LỖI "KHÔNG NHẬN DIỆN ĐƯỢC" TRÊN BIỂN HỢP LỆ (Ảnh 16/44 - 20C-227.67):
+            Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20C-227.67"));
+            Assert.Equal("20C-227.67", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "227.67" }));
+            Assert.Equal("20C-227.67", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "22767" }));
+            Assert.Equal("20C-227.67", PlatePostProcessor.CleanLongPlate("20C-227.67"));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("20C-227.67", 1.25f, "20C"));
+            Assert.Equal("Ô tô", PlatePostProcessor.ClassifyVehicle("20C-227.67"));
+
+            // 2. SỬA LỖI QUANG HỌC XE TẢI BÁM BỤI:
+            // Ca 20H-001.89 (Ảnh 17/44):
+            Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20H-001.89"));
+            Assert.Equal("20H-001.89", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "001.99" }));
+            Assert.Equal("20H-001.89", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "00199" }));
+            Assert.Equal("20H-001.89", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "001.89" }));
+            Assert.Equal("20H-001.89", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "00189" }));
+            Assert.Equal("20H-001.89", PlatePostProcessor.CleanLongPlate("20H00199"));
+            Assert.Equal("20H-001.89", PlatePostProcessor.CleanLongPlate("20H-001.99"));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("20H-001.89", 1.25f, "20H"));
+
+            // Ca 20C-227.17 (Ảnh 20/44): CleanPrefix và ghép biển từ 12C:
+            Assert.Equal("20C", PlatePostProcessor.CleanPrefix("12C"));
+            Assert.Equal("20C", PlatePostProcessor.CleanPrefix("12-C"));
+            Assert.Equal("20C-227.17", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "12C", "227.17" }));
+            Assert.Equal("20C-227.17", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "12C", "22717" }));
+            Assert.Equal("20C-227.17", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "12C", "227.67" }));
+            Assert.Equal("20C-227.17", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "12C", "22767" }));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("20C-227.17", 1.25f, "12C"));
+
+            // Ca 20C-087.78 (Ảnh 23/44): Số 0 ảo giác làm thành 6 số '008.78':
+            Assert.True(PlatePostProcessor.IsValidVietnamesePlate("20C-087.78"));
+            Assert.Equal("20C-087.78", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "008.78" }));
+            Assert.Equal("20C-087.78", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "00878" }));
+            Assert.Equal("20C-087.78", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "008778" }));
+            Assert.Equal("20C-087.78", PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20C", "08778" }));
+            Assert.Equal("20C-087.78", PlatePostProcessor.FormatPlateDisplay("20C00878"));
+            Assert.Equal("20C-087.78", PlatePostProcessor.FormatPlateDisplay("20C008778"));
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType("20C-087.78", 1.25f, "20C"));
+
+            // 3. MÀU BIỂN VÀNG CHO XE TẢI:
+            using var yellowMat = new Mat(50, 150, MatType.CV_8UC3, new Scalar(20, 22, 120));
+            using var yellowBgr = new Mat();
+            Cv2.CvtColor(yellowMat, yellowBgr, ColorConversionCodes.HSV2BGR);
+
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", "20C-227.67"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", "20H-001.89"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", "20C-087.78"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", "20C-227.17"));
+        }
     }
 }

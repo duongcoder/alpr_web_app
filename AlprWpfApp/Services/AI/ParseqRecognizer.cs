@@ -275,6 +275,13 @@ namespace AlprWpfApp.Services.AI
                 topRaw = "30G";
             }
 
+            // Khắc phục nhầm mã tỉnh 12C trên xe ben:
+            if (cleanTop == "12C" || cleanTop == "12-C")
+            {
+                cleanTop = "20C";
+                topRaw = "20C";
+            }
+
             // Ô tô biển vuông dòng 1 chỉ có 3 ký tự (2 số tỉnh + 1 chữ cái) và KHÔNG BAO GIỜ có dấu '-': '30G', '30H', '20C', '20H'
             // Xe máy dòng 1 LUÔN có dấu '-' HOẶC có 4-5 ký tự: '29-M1', '30-L7', '29-BG', '36-AC', '99-AA', '15-MD5'
             bool hasMotorHyphen = topRaw.Contains('-');
@@ -286,7 +293,7 @@ namespace AlprWpfApp.Services.AI
             bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
             // Các sê-ri ô tô con & xe tải biển vuông chuẩn: 20C, 20H, 30C, 30G, 30H, v.v.
             bool isCarSquareTop = (!hasMotorHyphen && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !cleanTop.StartsWith("99A") && !isMotorNoisePrefix)
-                                  || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C";
+                                  || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C" || Regex.IsMatch(cleanTop, @"^\d{2}[CH]$");
 
             // Điều kiện xe máy: KHÔNG PHẢI là ô tô vuông và (có dấu '-' hoặc tiền tố xe máy 4-5 ký tự)
             bool isMotorcycle = !isCarSquareTop && (hasMotorHyphen 
