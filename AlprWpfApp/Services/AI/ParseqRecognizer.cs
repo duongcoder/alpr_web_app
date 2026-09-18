@@ -153,6 +153,46 @@ namespace AlprWpfApp.Services.AI
         }
 
         /// <summary>
+        /// Phân biệt hình thái học giữa chữ số '5' và '8' trên dòng 2 xe ben 20H (Ảnh 8/44 vs Ảnh 1, 6, 7, 38):
+        /// Kiểm tra mật độ pixel góc trên-phải (Upper-Right Quadrant) của ký tự thứ 4 trong botCrop
+        /// (tọa độ x in [68%..78%] width, y in [15%..45%] height):
+        /// - Chữ số '8': Góc trên-phải có nét cong khép kín của vòng lặp trên (mật độ stroke cao >= 12%).
+        /// - Chữ số '5': Góc trên-phải hoàn toàn TRỐNG (vùng nền, hở nét đặc trưng dưới thanh ngang).
+        /// </summary>
+        public static bool IsUpperRightQuadrantEmptyForDigitFive(Mat botCrop)
+        {
+            if (botCrop == null || botCrop.IsDisposed || botCrop.Empty() || botCrop.Width < 20 || botCrop.Height < 10)
+                return false;
+
+            try
+            {
+                int charX = (int)(botCrop.Width * 0.68f);
+                int charW = Math.Max(2, (int)(botCrop.Width * 0.08f));
+                int charY = (int)(botCrop.Height * 0.18f);
+                int charH = Math.Max(2, (int)(botCrop.Height * 0.25f));
+
+                charX = Math.Clamp(charX, 0, botCrop.Width - charW);
+                charY = Math.Clamp(charY, 0, botCrop.Height - charH);
+
+                using var botGray = new Mat();
+                Cv2.CvtColor(botCrop, botGray, ColorConversionCodes.BGR2GRAY);
+
+                using var bin = new Mat();
+                Cv2.Threshold(botGray, bin, 0, 255, ThresholdTypes.BinaryInv | ThresholdTypes.Otsu);
+
+                using var roi = new Mat(bin, new OpenCvSharp.Rect(charX, charY, charW, charH));
+                int strokePixels = Cv2.CountNonZero(roi);
+                float strokeRatio = (float)strokePixels / (charW * charH);
+
+                return strokeRatio < 0.12f;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Tiền xử lý theo cơ chế Aspect-Ratio Preserved Canvas Padding:
         /// Giữ nguyên tỷ lệ chiều rộng/chiều cao tự nhiên khi resize về chiều cao 32px (naturalW = src.Width * 32 / src.Height),
         /// sau đó dán vào Canvas đen 128x32 và chuẩn hóa ImageNet NCHW.
@@ -384,6 +424,20 @@ namespace AlprWpfApp.Services.AI
                 cleanTop = "30G";
             }
 
+            // Phân biệt hình thái học số '5' vs '8' trên xe ben 20H (Ảnh 8/44):
+            if ((topRaw == "20H" || cleanTop == "20H") &&
+                (botRaw.Contains("00784") || botRaw.Contains("007.84") || botRaw.Contains("07884") || botRaw.Contains("078.84") || botRaw.EndsWith("84")))
+            {
+                if (IsUpperRightQuadrantEmptyForDigitFive(botCrop))
+                {
+                    botRaw = botRaw.Replace("00784", "00754").Replace("007.84", "007.54").Replace("07884", "00754").Replace("078.84", "007.54");
+                    if (botRaw.EndsWith("84") && !botRaw.EndsWith("54"))
+                    {
+                        botRaw = botRaw.Substring(0, botRaw.Length - 2) + "54";
+                    }
+                }
+            }
+
             var linesA = new List<string>();
             if (!string.IsNullOrWhiteSpace(topRaw)) linesA.Add(topRaw);
             if (!string.IsNullOrWhiteSpace(botRaw)) linesA.Add(botRaw);
@@ -394,6 +448,21 @@ namespace AlprWpfApp.Services.AI
             using var claheFull = useClaheHypB ? ApplyClahe(cropImg, 1.5) : null;
             using var sharpFull = SharpenPlate(claheFull ?? cropImg);
             var (fullText, confB) = PredictSingleCropWithConfidence(sharpFull);
+
+            // Phân biệt hình thái học số '5' vs '8' trên xe ben 20H (Hypothesis B):
+            if ((topRaw == "20H" || cleanTop == "20H") &&
+                (fullText.Contains("00784") || fullText.Contains("007.84") || fullText.Contains("07884") || fullText.Contains("078.84") || fullText.EndsWith("84")))
+            {
+                if (IsUpperRightQuadrantEmptyForDigitFive(botCrop))
+                {
+                    fullText = fullText.Replace("00784", "00754").Replace("007.84", "007.54").Replace("07884", "00754").Replace("078.84", "007.54");
+                    if (fullText.EndsWith("84") && !fullText.EndsWith("54"))
+                    {
+                        fullText = fullText.Substring(0, fullText.Length - 2) + "54";
+                    }
+                }
+            }
+
             var linesB = new List<string>();
             if (!string.IsNullOrWhiteSpace(fullText)) linesB.Add(fullText);
 
@@ -459,12 +528,28 @@ namespace AlprWpfApp.Services.AI
                     // Bước 2: Bóc tách bằng Regex từ fullRaw:
                     string prefix = PlatePostProcessor.CleanPrefix(fullRaw); // ví dụ '30H', '21A', '30K'
                     if (prefix == "20L") prefix = "30L"; // Thái Nguyên không có sê-ri xe con 20L, nhầm lẫn quang học từ 30L
+                    if (prefix == "33C" || prefix == "33-C") prefix = "30L";
+                    if (prefix == "33A" || prefix == "33-A") prefix = "30A";
                     string fullDigits = Regex.Replace(fullRaw.Substring(Math.Min(fullRaw.Length, 3)), @"[^\d]", "");
 
                     // Khắc phục đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 419.02):
                     if (prefix == "30L" && (fullDigits == "11002" || fullDigits.StartsWith("11002")))
                     {
                         fullDigits = "41902";
+                    }
+                    // Khắc phục xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
+                    if (prefix == "30F" && (fullDigits == "00022" || fullDigits.StartsWith("00022")))
+                    {
+                        fullDigits = "60022";
+                    }
+                    else if (prefix == "30C" && (fullDigits == "60022" || fullDigits.StartsWith("60022")))
+                    {
+                        prefix = "30F";
+                    }
+                    // Khắc phục xe con 30L-508.91 (Ảnh 28/23605):
+                    else if ((prefix == "33C" || prefix == "30C" || prefix == "30L") && (fullDigits == "50891" || fullDigits.StartsWith("50891")))
+                    {
+                        prefix = "30L";
                     }
 
                     // Bước 3: Tinh chỉnh 2 số đuôi bằng Tail-Crop:

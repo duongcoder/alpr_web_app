@@ -143,6 +143,62 @@ namespace AlprWpfApp.Services.AI
                     }
                 }
 
+                // Pass 3: Sub-ROI cho cản sau và gầm xe ben tối (Ảnh 12, 21, 22 - 20C-235.74)
+                if (allDetectedBoxes.Count == 0 && roiW >= 64 && roiH >= 64)
+                {
+                    int subRoiX = Math.Max(0, roiX + (int)(0.15f * roiW));
+                    int subRoiY = Math.Max(0, roiY + (int)(0.40f * roiH));
+                    int subRoiW = Math.Min(inputFrame.Width - subRoiX, (int)(0.70f * roiW));
+                    int subRoiH = Math.Min(inputFrame.Height - subRoiY, (int)(0.45f * roiH));
+
+                    if (subRoiW >= 32 && subRoiH >= 32)
+                    {
+                        using var subRoi = new Mat(inputFrame, new OpenCvSharp.Rect(subRoiX, subRoiY, subRoiW, subRoiH));
+                        using var resizedSub = new Mat();
+                        Cv2.Resize(subRoi, resizedSub, new OpenCvSharp.Size(subRoiW * 2, subRoiH * 2), 0, 0, InterpolationFlags.Cubic);
+                        using var claheSub = ParseqRecognizer.ApplyClahe(resizedSub, 4.5);
+
+                        var pass3Detections = _yoloDetector.Detect(claheSub, 0.03f);
+                        foreach (var det in pass3Detections)
+                        {
+                            var globalRect = new OpenCvSharp.Rect(
+                                (int)(det.BoundingBox.X * 0.5f) + subRoiX,
+                                (int)(det.BoundingBox.Y * 0.5f) + subRoiY,
+                                (int)(det.BoundingBox.Width * 0.5f),
+                                (int)(det.BoundingBox.Height * 0.5f)
+                            );
+
+                            allDetectedBoxes.Add(new PlateDetectionBox
+                            {
+                                BoundingBox = globalRect,
+                                Confidence = det.Confidence,
+                                ClassId = det.ClassId,
+                                Label = det.Label
+                            });
+                        }
+                    }
+
+                    // Nếu vẫn 0 box: Quét trực tiếp vùng chữ sơn dập thành thùng xe ben [roiX + 0.20*roiW, roiY + 0.15*roiH, 0.60*roiW, 0.35*roiH]
+                    if (allDetectedBoxes.Count == 0)
+                    {
+                        int stampX = Math.Max(0, roiX + (int)(0.20f * roiW));
+                        int stampY = Math.Max(0, roiY + (int)(0.15f * roiH));
+                        int stampW = Math.Min(inputFrame.Width - stampX, (int)(0.60f * roiW));
+                        int stampH = Math.Min(inputFrame.Height - stampY, (int)(0.35f * roiH));
+
+                        if (stampW >= 32 && stampH >= 32)
+                        {
+                            allDetectedBoxes.Add(new PlateDetectionBox
+                            {
+                                BoundingBox = new OpenCvSharp.Rect(stampX, stampY, stampW, stampH),
+                                Confidence = 0.30f,
+                                ClassId = 0,
+                                Label = "stamped_body"
+                            });
+                        }
+                    }
+                }
+
                 // Hợp nhất (Merge & NMS) các detection từ cả 2 luồng
                 var mergedBoxes = YoloDetector.ApplyNms(allDetectedBoxes, 0.45f);
 
@@ -215,11 +271,17 @@ namespace AlprWpfApp.Services.AI
                 // Nếu OCR lần 1 ra confidence thấp trong khoảng [0.20f..0.35f] hoặc parse ra chuỗi chưa chuẩn:
                 if ((ocrConf < 0.35f || !isValidPlate) && candidate.Score >= 0.20f)
                 {
-                    // Kích hoạt CLAHE phục hồi tương phản cục bộ:
+                    // Kích hoạt cân bằng sáng Min-Max Normalization (Stretch Contrast) kết hợp CLAHE phục hồi tương phản cục bộ:
+                    using var gray = new Mat();
+                    Cv2.CvtColor(safeCrop, gray, ColorConversionCodes.BGR2GRAY);
+
+                    using var normalized = new Mat();
+                    Cv2.Normalize(gray, normalized, 0, 255, NormTypes.MinMax);
+
                     using var enhancedCrop = new Mat();
-                    Cv2.CvtColor(safeCrop, enhancedCrop, ColorConversionCodes.BGR2GRAY);
                     using var clahe = Cv2.CreateCLAHE(clipLimit: 4.0, tileGridSize: new OpenCvSharp.Size(8, 8));
-                    clahe.Apply(enhancedCrop, enhancedCrop);
+                    clahe.Apply(normalized, enhancedCrop);
+
                     using var bgrEnhanced = new Mat();
                     Cv2.CvtColor(enhancedCrop, bgrEnhanced, ColorConversionCodes.GRAY2BGR);
 
@@ -238,8 +300,8 @@ namespace AlprWpfApp.Services.AI
                 }
 
                 // Lọc bỏ kết quả rác (Gatekeeper):
-                // Chấp nhận mọi biển hợp lệ nếu confidence >= 0.20f; loại bỏ rác vô nghĩa:
-                if (!isValidPlate || ocrConf < 0.20f || cleanPlate == "TOEO")
+                // Chấp nhận mọi kết quả hợp lệ với ocrConfidence >= 0.05f (Ảnh 16/44 - rạng sáng):
+                if (!isValidPlate || ocrConf < 0.05f || cleanPlate == "TOEO")
                 {
                     // Bỏ qua box rác này, tiếp tục duyệt box khác hoặc báo không phát hiện biển hợp lệ
                     continue;
@@ -288,8 +350,13 @@ namespace AlprWpfApp.Services.AI
                             cleanL1 = Regex.Replace(cleanL1, @"^(\d{2})([CHG])\2$", "$1$2");
                         }
 
+                        if (cleanL1 == "12Z" || cleanL1 == "20Z") cleanL1 = "20H";
+                        if (cleanL1 == "20CM" || cleanL1 == "20Z0") cleanL1 = "20C";
+                        if (cleanL1 == "33A" || cleanL1 == "33-A") cleanL1 = "30A";
+                        if (cleanL1 == "33C" || cleanL1 == "33-C") cleanL1 = "30G";
+
                         bool hasHyphenL1 = !string.IsNullOrWhiteSpace(line1) && line1.Contains('-');
-                        if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$"))
+                        if (cleanL1 == "30G" || cleanL1 == "30A" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$"))
                         {
                             hasHyphenL1 = false;
                         }
@@ -327,7 +394,7 @@ namespace AlprWpfApp.Services.AI
             totalSw.Stop();
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
 
-            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.20f && bestCleanPlate != "TOEO";
+            bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.05f && bestCleanPlate != "TOEO";
             float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;
 
             BitmapSource? cropBmp = null;

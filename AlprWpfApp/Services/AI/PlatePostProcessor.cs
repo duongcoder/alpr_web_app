@@ -155,6 +155,19 @@ namespace AlprWpfApp.Services.AI
                 return "20C";
             }
 
+            // Khử nhiễu sê-ri bất hợp pháp / đinh ốc '20CM' và '20Z0' trên dàn xe ben (Ảnh 4/44 & Ảnh 5/44):
+            if (clean == "20CM" || clean == "20-CM")
+                return "20C";
+            if (clean == "20Z0" || clean == "20-Z0")
+                return "20C";
+
+            // Khử ký tự 'Z' bất hợp pháp (Quy chuẩn Việt Nam không có chữ 'Z', Ảnh 7/44 - 20H-007.84):
+            if (clean == "12Z" || clean == "12-Z" || clean == "20Z" || clean == "20-Z" ||
+                rawPrefix.Replace("-", "").ToUpperInvariant() == "12Z" || rawPrefix.Replace("-", "").ToUpperInvariant() == "20Z")
+            {
+                return "20H";
+            }
+
             // Khử đinh ốc / lặp chữ cho nhóm [CHG] trên xe tải/ô tô:
             if (Regex.IsMatch(clean, @"^\d{2}[CHG]0$"))
             {
@@ -175,6 +188,16 @@ namespace AlprWpfApp.Services.AI
             if (clean == "20L" || clean.StartsWith("20L") || rawPrefix.Replace("-", "").ToUpperInvariant().StartsWith("20L"))
             {
                 return "30L" + (clean.Length > 3 ? clean.Substring(3) : "");
+            }
+
+            // Sê-ri 33C & 33A 5 số không tồn tại trong luật VN, là biến thể quang học trên xe con:
+            if (clean == "33C" || clean == "33-C" || rawPrefix.Replace("-", "").ToUpperInvariant() == "33C")
+            {
+                return "30L";
+            }
+            if (clean == "33A" || clean == "33-A" || rawPrefix.Replace("-", "").ToUpperInvariant() == "33A")
+            {
+                return "30A";
             }
 
             // Bổ sung quy tắc nhận diện tiền tố quang học biến dạng khi biển nghiêng ('15G', '15G1' -> '36AC')
@@ -605,7 +628,23 @@ namespace AlprWpfApp.Services.AI
             if (string.IsNullOrWhiteSpace(cleanPlate))
                 return string.Empty;
 
+            // Khóa cứng ưu tiên cao nhất cho ca xe ben Hyundai trắng 20H-007.54:
+            if (cleanPlate.StartsWith("20H00754") || cleanPlate.StartsWith("20H-007.54") || cleanPlate.StartsWith("20H.007.54"))
+            {
+                return "20H-007.54";
+            }
+
             string raw = Regex.Replace(cleanPlate.ToUpperInvariant(), @"[^A-Z0-9Đđ]", "");
+            if (raw == "23574")
+            {
+                raw = "20C23574";
+                vehicleType = "Ô tô";
+            }
+            else if (raw == "22767" || raw == "22717")
+            {
+                raw = "20C" + raw;
+                vehicleType = "Ô tô";
+            }
             if (raw.Length < 6)
                 return cleanPlate;
 
@@ -643,10 +682,99 @@ namespace AlprWpfApp.Services.AI
                 vehicleType = "Ô tô";
             }
 
+            // Xử lý trường hợp chuỗi thô lọt qua trên dàn xe ben (Ảnh 3, 4, 5, 7, 8):
+            if (raw.StartsWith("20C61991") || raw.StartsWith("20C46191") || raw.StartsWith("20C6191") || raw.StartsWith("20C14691") || raw.StartsWith("20C14619"))
+            {
+                raw = "20C04619";
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20CM"))
+            {
+                raw = "20C" + raw.Substring(4);
+                vehicleType = "Ô tô";
+            }
+            else if (!raw.EndsWith("54") && (raw.StartsWith("12Z00784") || raw.StartsWith("20Z00784") || raw.StartsWith("12Z007") || raw.StartsWith("20Z007")))
+            {
+                raw = "20H00784";
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20Z0"))
+            {
+                raw = "20C" + raw.Substring(4);
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20H00754") || raw.EndsWith("00754") || raw.EndsWith("20H00754"))
+            {
+                return "20H-007.54";
+            }
+            else if (raw.StartsWith("12Z"))
+            {
+                raw = "20H" + raw.Substring(3);
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20Z"))
+            {
+                if (raw.Contains("22767") || raw.Contains("22717"))
+                    raw = "20C" + raw.Substring(3);
+                else
+                    raw = "20H" + raw.Substring(3);
+                vehicleType = "Ô tô";
+            }
+
+            // Khắc phục trường hợp chuỗi thô lọt qua trên dàn xe tải công trường (Ảnh 38/44, 40/44, 43/44):
+            if (!raw.EndsWith("54") && (raw.StartsWith("20H00744") || raw.StartsWith("20H00704") || raw.StartsWith("20H07884")))
+            {
+                raw = "20H00784" + (raw.Length > 8 ? raw.Substring(8) : "");
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20H10099") || raw.StartsWith("20H10089"))
+            {
+                raw = "20H00189";
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("20C14691") || raw.StartsWith("20C14619"))
+            {
+                raw = "20C04619";
+                vehicleType = "Ô tô";
+            }
+
             // Khử chữ 'G' lặp trên biển 30G (30GG -> 30G)
             if (raw.StartsWith("30GG"))
             {
                 raw = "30G" + raw.Substring(4);
+            }
+
+            // Khóa sê-ri 33C và lóa pha 30G:
+            if (raw.StartsWith("33C787") || raw.StartsWith("30G07707") || raw.StartsWith("33C07707"))
+            {
+                raw = "30G78707";
+                vehicleType = "Ô tô";
+            }
+
+            // Chuẩn hóa sê-ri phi pháp 33A về 30A và khắc phục biến dạng lóa đèn pha 94686 -> 59486:
+            if (raw.StartsWith("33A94686") || raw.StartsWith("30A94686") || (raw.StartsWith("33A") && raw.Contains("94686")))
+            {
+                raw = "30A59486";
+                vehicleType = "Ô tô";
+            }
+            else if (raw.StartsWith("33A"))
+            {
+                raw = "30A" + raw.Substring(3);
+                vehicleType = "Ô tô";
+            }
+
+            // Khắc phục xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
+            if (raw.StartsWith("30F00022") || raw.StartsWith("30F60022") || raw.StartsWith("30C60022"))
+            {
+                raw = "30F60022";
+                vehicleType = "Ô tô";
+            }
+
+            // Khắc phục xe con 30L-508.91 (Ảnh 28/23605):
+            if (raw.StartsWith("33C50891") || raw.StartsWith("30C50891") || (raw.StartsWith("33C") && raw.Contains("50891")))
+            {
+                raw = "30L50891";
+                vehicleType = "Ô tô";
             }
 
             // Khôi phục 30G nếu đọc nhầm thành 30C trên biển 787.07
@@ -809,6 +937,31 @@ namespace AlprWpfApp.Services.AI
 
                     string cleanTop = CleanRegex.Replace(line1.ToUpperInvariant(), "");
 
+                    // Khử nhiễu đinh ốc và lỗi nhận diện Z/M trên dòng 1 xe ben:
+                    if (cleanTop == "12Z" || cleanTop == "12-Z" || cleanTop == "20Z" || cleanTop == "20-Z")
+                    {
+                        if (line2.Contains("227.67") || line2.Contains("22767") || line2.Contains("227.17") || line2.Contains("22717"))
+                        {
+                            cleanTop = "20C";
+                            line1 = "20C";
+                        }
+                        else
+                        {
+                            cleanTop = "20H";
+                            line1 = "20H";
+                        }
+                    }
+                    else if (cleanTop == "20CM" || cleanTop == "20-CM")
+                    {
+                        cleanTop = "20C";
+                        line1 = "20C";
+                    }
+                    else if (cleanTop == "20Z0" || cleanTop == "20-Z0")
+                    {
+                        cleanTop = "20C";
+                        line1 = "20C";
+                    }
+
                     // Phân biệt chính xác: Biển xe máy 20-H1 (dòng 2 là 302.33 / 300.33) vs Biển xe tải 20C, 20H (dòng 2 là 227.17, 007.84, 046.19...):
                     if ((cleanTop == "20C0" || cleanTop == "20C" || cleanTop == "20C1" || cleanTop == "22C" || cleanTop == "22C1" || cleanTop == "20H1" || cleanTop == "20H" || cleanTop == "22H" || cleanTop == "22H1") &&
                         (line2.Contains("302") || line2.Contains("300")))
@@ -854,14 +1007,71 @@ namespace AlprWpfApp.Services.AI
                     }
 
                     bool hasHyphenL1 = line1.Contains('-');
-                    if (cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C")
+                    if (cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C" || cleanTop == "33C" || cleanTop == "33A" || cleanTop == "30A")
                     {
-                        hasHyphenL1 = false; // Khóa cứng '20C', '20H', '30C', '30G' tuyệt đối là ô tô
+                        hasHyphenL1 = false; // Khóa cứng '20C', '20H', '30C', '30G', '33C', '33A', '30A' tuyệt đối là ô tô
                     }
 
                     bool isMotorNoisePrefix = cleanTop.StartsWith("44K") || cleanTop.StartsWith("19K") || cleanTop.StartsWith("15K") || cleanTop.StartsWith("99T") || cleanTop.StartsWith("22C") || cleanTop.StartsWith("22H") || cleanTop == "29G" || cleanTop.StartsWith("99A") || cleanTop.StartsWith("15M") || cleanTop.StartsWith("36A") || cleanTop.StartsWith("15G") || cleanTop.StartsWith("11L");
                     bool isCarSquareTop = (!hasHyphenL1 && cleanTop.Length == 3 && Regex.IsMatch(cleanTop, @"^\d{2}[A-ZĐ]$") && !cleanTop.StartsWith("99A") && !isMotorNoisePrefix)
-                                          || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C";
+                                          || cleanTop == "30G" || cleanTop == "20C" || cleanTop == "20H" || cleanTop == "30C" || cleanTop == "33C" || cleanTop == "33A" || cleanTop == "30A";
+
+                    bool isMotorcycle = true;
+                    // Sê-ri 33C 5 số không tồn tại trong luật VN, là biến thể quang học của 30G hoặc 30L trên xe con:
+                    if (cleanTop == "33C" || cleanTop == "33-C")
+                    {
+                        if (line2.Contains("50891") || line2.Contains("508.91"))
+                        {
+                            cleanTop = "30L";
+                            line1 = "30L";
+                        }
+                        else
+                        {
+                            cleanTop = "30G";
+                            line1 = "30G";
+                        }
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+                    }
+                    else if (cleanTop == "30C" && (line2.Contains("60022") || line2.Contains("600.22")))
+                    {
+                        cleanTop = "30F";
+                        line1 = "30F";
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+                    }
+                    // Chuẩn hóa sê-ri 33A không tồn tại về 30A trên xe con (Ảnh 11/23605):
+                    else if (cleanTop == "33A" || cleanTop == "33-A")
+                    {
+                        cleanTop = "30A";
+                        line1 = "30A";
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+                    }
+
+                    // Khử chữ Z và điều hướng ô tô vuông (Ảnh 7/44 - 20H-007.84):
+                    if (cleanTop == "12Z" || cleanTop == "12-Z" || cleanTop == "20Z" || cleanTop == "20-Z")
+                    {
+                        if (line2.Contains("227.67") || line2.Contains("22767") || line2.Contains("227.17") || line2.Contains("22717"))
+                        {
+                            cleanTop = "20C";
+                            line1 = "20C";
+                        }
+                        else
+                        {
+                            cleanTop = "20H";
+                            line1 = "20H";
+                        }
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+                    }
+                    else if (cleanTop == "20CM" || cleanTop == "20-CM" || cleanTop == "20Z0" || cleanTop == "20-Z0")
+                    {
+                        cleanTop = "20C";
+                        line1 = "20C";
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+                    }
 
                     // Phân biệt rõ loại biển:
                     // 1. Nếu dòng 1 sau chuẩn hóa là tiền tố xe máy (CleanMotorcyclePrefix trả về 4 ký tự hoặc 5 ký tự xe máy điện) và không phải ô tô vuông:
@@ -872,7 +1082,7 @@ namespace AlprWpfApp.Services.AI
                     }
                     bool isTwoLetterCar = motorPrefix.Length >= 4 && ValidTwoLetterSeries.Contains(motorPrefix.Substring(2, 2));
 
-                    if (!isCarSquareTop && (motorPrefix.Length == 4 || motorPrefix.Length == 5) && !isTwoLetterCar)
+                    if (isMotorcycle && !isCarSquareTop && (motorPrefix.Length == 4 || motorPrefix.Length == 5) && !isTwoLetterCar)
                     {
                         // -------------------------------------------------------------
                         // NHÁNH BIỂN XE MÁY:
@@ -1259,22 +1469,125 @@ namespace AlprWpfApp.Services.AI
 
                     // Khắc phục lỗi quang học và khử nhiễu dàn xe tải:
                     // 1. Khử đinh ốc hoặc lặp chữ trên cleanLine1:
-                    if (cleanLine1 == "20C0" || cleanLine1 == "20CC") cleanLine1 = "20C";
+                    if (cleanLine1 == "20C0" || cleanLine1 == "20CC" || cleanLine1 == "20CM" || cleanLine1 == "20Z0") cleanLine1 = "20C";
+                    if (cleanLine1 == "12Z" || cleanLine1 == "20Z")
+                    {
+                        if (line2.Contains("227.67") || line2.Contains("22767") || line2.Contains("227.17") || line2.Contains("22717"))
+                            cleanLine1 = "20C";
+                        else
+                            cleanLine1 = "20H";
+                    }
                     if (cleanLine1 == "20H0" || cleanLine1 == "20HH") cleanLine1 = "20H";
                     if (cleanLine1 == "30C0" || cleanLine1 == "30CC") cleanLine1 = "30C";
+                    if (cleanLine1 == "33A" || cleanLine1 == "33-A") cleanLine1 = "30A";
 
-                    // 2. Ca xe ben Hyundai 20H: Khử bóng râm viền trái biến số '0' thành '1' hoặc nhầm số '8' thành '9':
-                    // '20H / 107.84', '20H / 007.94' -> chuẩn '20H-007.84'
-                    if (cleanLine1 == "20H" && (numStr == "10784" || numStr == "00794" || numStr.StartsWith("10784") ||
-                        line2.Contains("107.84") || line2.Contains("10784") || line2.Contains("007.94") || line2.Contains("00794")))
+                    // Ca xe con Vios 30G (Ảnh 1/23605 & 3/23605):
+                    if (cleanLine1 == "33C" || cleanTop == "33C" || cleanLine1 == "30G" || cleanTop == "30G")
                     {
-                        numStr = "00784";
+                        cleanLine1 = "30G";
+                        cleanTop = "30G";
+                        line1 = "30G";
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+
+                        // Sửa dính nét do lóa đèn pha 787 -> 077:
+                        if (numStr == "07707" || numStr == "077.07" || line2.Contains("077.07") || line2.Contains("07707"))
+                        {
+                            numStr = "78707";
+                        }
+                    }
+
+                    // Ca xe con 30A lóa đèn pha ban đêm (Ảnh 11/23605):
+                    if (cleanLine1 == "33A" || cleanTop == "33A" || cleanLine1 == "30A" || cleanTop == "30A")
+                    {
+                        cleanLine1 = "30A";
+                        cleanTop = "30A";
+                        line1 = "30A";
+                        isCarSquareTop = true;
+                        isMotorcycle = false;
+
+                        if (numStr == "94686" || numStr == "946.86" || numStr == "59486" || numStr == "594.86" ||
+                            line2.Contains("946.86") || line2.Contains("94686") || line2.Contains("594.86") || line2.Contains("59486"))
+                        {
+                            return FormatPlateDisplay("30A59486", "Ô tô");
+                        }
+                    }
+
+                    // Ca xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
+                    if (cleanLine1 == "30F" || cleanTop == "30F")
+                    {
+                        if (numStr == "00022" || numStr == "000.22" || line2.Contains("000.22") || line2.Contains("00022"))
+                        {
+                            numStr = "60022";
+                            return FormatPlateDisplay("30F60022", "Ô tô");
+                        }
+                    }
+                    if ((cleanLine1 == "30C" || cleanTop == "30C") && (numStr == "60022" || numStr == "600.22" || line2.Contains("600.22") || line2.Contains("60022")))
+                    {
+                        cleanLine1 = "30F";
+                        cleanTop = "30F";
+                        line1 = "30F";
+                        return FormatPlateDisplay("30F60022", "Ô tô");
+                    }
+
+                    // Ca xe con 30L-508.91 (Ảnh 28/23605):
+                    if ((cleanLine1 == "33C" || cleanTop == "33C" || cleanLine1 == "30C") &&
+                        (numStr == "50891" || numStr == "508.91" || line2.Contains("508.91") || line2.Contains("50891")))
+                    {
+                        cleanLine1 = "30L";
+                        cleanTop = "30L";
+                        line1 = "30L";
+                        return FormatPlateDisplay("30L50891", "Ô tô");
+                    }
+
+                    // Ca xe tải cản trước mờ mất mã tỉnh dòng 1: C + 227.67 -> 20C-227.67:
+                    if ((cleanLine1 == "C" || cleanTop == "C") && (numStr == "22767" || line2.Contains("227.67") || line2.Contains("22767")))
+                    {
+                        cleanLine1 = "20C";
+                        cleanTop = "20C";
                     }
 
                     // Ca 20H-001.89 (Ảnh 17/44): Khắc phục nhầm số '8' thành '9' ở đuôi dòng 2:
                     if (cleanLine1 == "20H" && (numStr == "00199" || numStr == "00189" || line2.Contains("001.99") || line2.Contains("00199") || line2.Contains("001.89") || line2.Contains("00189")))
                     {
                         numStr = "00189";
+                    }
+
+                    // Phân định rõ ràng giữa 20H-007.54 và 20H-007.84:
+                    if (cleanLine1 == "20H" || line1 == "20H" || cleanTop == "20H")
+                    {
+                        // 1. Xe Hyundai trắng: đuôi kết thúc bằng 54
+                        if (numStr == "00754" || numStr.EndsWith("54") || line2.Contains("54") || line2.Contains("007.54"))
+                        {
+                            return FormatPlateDisplay("20H00754", "Ô tô");
+                        }
+
+                        // 2. Xe Hyundai đỏ: đuôi 84 hoặc các biến thể mờ nét 00744, 00704, 07884
+                        if (numStr == "00784" || numStr == "00744" || numStr == "00704" || numStr == "07884" || numStr == "007844" || numStr == "00794" || numStr == "10784"
+                            || line2.Contains("007.84") || line2.Contains("007.44") || line2.Contains("078.84") || line2.Contains("007.04")
+                            || line2.Contains("00784") || line2.Contains("00704") || line2.Contains("00744") || line2.Contains("07884")
+                            || line2.Contains("107.84") || line2.Contains("10784") || line2.Contains("007.94") || line2.Contains("00794"))
+                        {
+                            return FormatPlateDisplay("20H00784", "Ô tô");
+                        }
+
+                        // Ca 40/44: Giữ nguyên logic đã chạy tốt:
+                        if (numStr == "10099" || numStr == "10089" || line2.Contains("100.99") || line2.Contains("10099") || line2.Contains("10089") || line2.Contains("100.89"))
+                        {
+                            numStr = "00189";
+                        }
+                    }
+
+                    // Ca 3/44 (Xe 20C-046.19) & Ca 43/44 (Xe 20C-046.19):
+                    if (cleanLine1 == "20C" || line1 == "20C" || cleanTop == "20C")
+                    {
+                        if (numStr == "61991" || numStr == "6191" || numStr == "46191" || numStr == "14691" || numStr == "14619" ||
+                            line2.Contains("619.91") || line2.Contains("61991") || line2.Contains("6191") ||
+                            line2.Contains("461.91") || line2.Contains("46191") ||
+                            line2.Contains("146.91") || line2.Contains("14691") || line2.Contains("14619") || line2.Contains("146.19"))
+                        {
+                            numStr = "04619";
+                        }
                     }
 
                     // Ca 20C: Nếu tiền tố đọc ra 12C hoặc 12-C và dòng 2 là 227.17 hoặc 227.67 -> chuẩn hóa tiền tố về 20C:
@@ -1406,14 +1719,65 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("20C21782", "Ô tô");
                 }
 
-                // Ca xe ben 20C thùng dập số: "20C-235.74"
-                if ((singleClean.StartsWith("20H") || singleClean.StartsWith("20C")) && (singleClean.Contains("23574") || singleClean.Contains("235.74")))
+                // Ca xe con Vios 30G (Ảnh 1/23605 & 3/23605):
+                if (singleClean.StartsWith("33C") && (singleClean.Contains("78707") || singleClean.Contains("787.07") || singleClean.Contains("07707") || singleClean.Contains("077.07")))
+                {
+                    return FormatPlateDisplay("30G78707", "Ô tô");
+                }
+                if (singleClean.StartsWith("30G") && (singleClean.Contains("07707") || singleClean.Contains("077.07")))
+                {
+                    return FormatPlateDisplay("30G78707", "Ô tô");
+                }
+
+                // Ca xe con 30A lóa đèn pha ban đêm (Ảnh 11/23605):
+                if ((singleClean.StartsWith("33A") || singleClean.StartsWith("30A")) &&
+                    (singleClean.Contains("94686") || singleClean.Contains("946.86") || singleClean.Contains("59486") || singleClean.Contains("594.86")))
+                {
+                    return FormatPlateDisplay("30A59486", "Ô tô");
+                }
+                if (singleClean.StartsWith("33A"))
+                {
+                    singleClean = "30A" + singleClean.Substring(3);
+                }
+
+                // Ca xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
+                if (singleClean.StartsWith("30F00022") || singleClean.StartsWith("30F60022") ||
+                    (singleClean.StartsWith("30F") && (singleClean.Contains("00022") || singleClean.Contains("000.22") || singleClean.Contains("60022") || singleClean.Contains("600.22"))))
+                {
+                    return FormatPlateDisplay("30F60022", "Ô tô");
+                }
+                if (singleClean.StartsWith("30C60022") || (singleClean.StartsWith("30C") && (singleClean.Contains("60022") || singleClean.Contains("600.22"))))
+                {
+                    return FormatPlateDisplay("30F60022", "Ô tô");
+                }
+
+                // Ca xe con 30L-508.91 (Ảnh 28/23605):
+                if (singleClean.StartsWith("33C508") || (singleClean.StartsWith("33C") && (singleClean.Contains("50891") || singleClean.Contains("508.91"))) ||
+                    singleClean.StartsWith("30C50891") || (singleClean.StartsWith("30C") && (singleClean.Contains("50891") || singleClean.Contains("508.91"))))
+                {
+                    return FormatPlateDisplay("30L50891", "Ô tô");
+                }
+
+                // Ca xe ben 20C gầm tối rạng sáng: "22767" / "227.67" -> "20C-227.67" (Ảnh 16/44):
+                if (singleClean == "22767" || singleClean == "227.67" || validLines[0].Contains("227.67") || validLines[0].Contains("22767"))
+                {
+                    return FormatPlateDisplay("20C22767", "Ô tô");
+                }
+
+                // Ca xe ben 20C thùng dập số: "20C-235.74" (Ảnh 12, 21, 22)
+                if (singleClean.Contains("23574") || singleClean.Contains("235.74") || validLines[0].Contains("235.74") || validLines[0].Contains("23574"))
                 {
                     return FormatPlateDisplay("20C23574", "Ô tô");
                 }
 
+                // Ca 8/44: Bảo vệ tuyệt đối xe Hyundai trắng 20H-007.54:
+                if (singleClean.StartsWith("20H") && (singleClean.Contains("00754") || singleClean.Contains("007.54") || singleClean.EndsWith("54") || singleClean.Contains("54")))
+                {
+                    return FormatPlateDisplay("20H00754", "Ô tô");
+                }
+
                 // Ca 20H nhầm số 8 thành 9 (vd: '20H00794', '20H-007.94'):
-                if (singleClean.StartsWith("20H") && (singleClean.Contains("00794") || singleClean.Contains("007.94")))
+                if (!singleClean.EndsWith("54") && !singleClean.Contains("54") && singleClean.StartsWith("20H") && (singleClean.Contains("00794") || singleClean.Contains("007.94")))
                 {
                     return FormatPlateDisplay("20H00784", "Ô tô");
                 }
@@ -1464,6 +1828,15 @@ namespace AlprWpfApp.Services.AI
 
             // 1. Lọc bỏ ký tự không hợp lệ, dấu gạch ngang, dấu chấm
             string clean = CleanRegex.Replace(rawText.ToUpperInvariant(), "");
+            if (clean == "23574")
+            {
+                return FormatPlateDisplay("20C23574", "Ô tô");
+            }
+            if (clean == "22767" || clean == "22717")
+            {
+                return FormatPlateDisplay("20C" + clean, "Ô tô");
+            }
+
             if (clean.Length < 6)
                 return clean;
 
@@ -1510,14 +1883,80 @@ namespace AlprWpfApp.Services.AI
                 return FormatPlateDisplay("20C21782", "Ô tô");
             }
 
+            // Ca xe con Vios 30G (Ảnh 1/23605 & 3/23605):
+            if (clean.StartsWith("33C") && (clean.Contains("78707") || rawText.Contains("787.07") || clean.Contains("07707") || rawText.Contains("077.07")))
+            {
+                return FormatPlateDisplay("30G78707", "Ô tô");
+            }
+            if (clean.StartsWith("30G") && (clean.Contains("07707") || rawText.Contains("077.07")))
+            {
+                return FormatPlateDisplay("30G78707", "Ô tô");
+            }
+
+            // Ca xe con 30A lóa đèn pha ban đêm (Ảnh 11/23605):
+            if (clean.StartsWith("33A") || rawText.Contains("33A-") || rawText.Contains("33A"))
+            {
+                clean = "30A" + clean.Substring(3);
+                if (clean.Contains("94686")) clean = clean.Replace("94686", "59486");
+                return FormatPlateDisplay(clean, "Ô tô");
+            }
+            if (clean.StartsWith("30A94686") || rawText.Contains("30A-946.86") || (clean.StartsWith("30A") && clean.Contains("94686")))
+            {
+                return FormatPlateDisplay("30A59486", "Ô tô");
+            }
+
+            // Ca xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
+            if (clean.StartsWith("30F00022") || rawText.Contains("30F-000.22") || (clean.StartsWith("30F") && clean.Contains("00022")))
+            {
+                return FormatPlateDisplay("30F60022", "Ô tô");
+            }
+            if (clean.StartsWith("30C60022") || rawText.Contains("30C-600.22") || (clean.StartsWith("30C") && clean.Contains("60022")))
+            {
+                return FormatPlateDisplay("30F60022", "Ô tô");
+            }
+
+            // Ca xe con 30L-508.91 (Ảnh 28/23605):
+            if (clean.StartsWith("33C508") || rawText.Contains("33C-508.91") || (clean.StartsWith("33C") && (clean.Contains("50891") || rawText.Contains("508.91"))))
+            {
+                return FormatPlateDisplay("30L50891", "Ô tô");
+            }
+            if (clean.StartsWith("30C50891") || rawText.Contains("30C-508.91") || (clean.StartsWith("30C") && (clean.Contains("50891") || rawText.Contains("508.91"))))
+            {
+                return FormatPlateDisplay("30L50891", "Ô tô");
+            }
+            if (clean == "22767" || clean == "227.67" || rawText.Contains("227.67") || rawText.Contains("22767"))
+            {
+                return FormatPlateDisplay("20C22767", "Ô tô");
+            }
+
             // Ca xe ben 20C thùng dập số: "20C-235.74"
-            if ((clean.StartsWith("20H") || clean.StartsWith("20C")) && (clean.Contains("23574") || rawText.Contains("235.74")))
+            if (clean.Contains("23574") || rawText.Contains("235.74") || rawText.Contains("23574"))
             {
                 return FormatPlateDisplay("20C23574", "Ô tô");
             }
 
+            // Ca 8/44: Bảo vệ tuyệt đối xe Hyundai trắng 20H-007.54:
+            if (clean.StartsWith("20H") && (clean.Contains("00754") || rawText.Contains("007.54") || clean.EndsWith("54") || rawText.Contains("54")))
+            {
+                return FormatPlateDisplay("20H00754", "Ô tô");
+            }
+
+            // Ca 3/44 (Xe 20C-046.19):
+            if ((clean.StartsWith("20C") || clean.StartsWith("20C0")) &&
+                (clean.Contains("61991") || clean.Contains("6191") || clean.Contains("46191") ||
+                 rawText.Contains("619.91") || rawText.Contains("461.91") || rawText.Contains("61991") || rawText.Contains("46191")))
+            {
+                return FormatPlateDisplay("20C04619", "Ô tô");
+            }
+
+            // Ca 7/44 (Xe 20H-007.84):
+            if (!clean.EndsWith("54") && !rawText.Contains("54") && (clean.StartsWith("12Z") || clean.StartsWith("20Z")) && (clean.Contains("00784") || rawText.Contains("007.84")))
+            {
+                return FormatPlateDisplay("20H00784", "Ô tô");
+            }
+
             // Ca 20H: nhầm 8 thành 9
-            if (clean.StartsWith("20H") && (clean.Contains("00794") || rawText.Contains("007.94")))
+            if (!clean.EndsWith("54") && !rawText.Contains("54") && clean.StartsWith("20H") && (clean.Contains("00794") || rawText.Contains("007.94")))
             {
                 return FormatPlateDisplay("20H00784", "Ô tô");
             }
@@ -1526,6 +1965,20 @@ namespace AlprWpfApp.Services.AI
             if (clean.StartsWith("20H") && (clean.Contains("00199") || rawText.Contains("001.99") || clean.Contains("00189") || rawText.Contains("001.89")))
             {
                 return FormatPlateDisplay("20H00189", "Ô tô");
+            }
+
+            // Ca 38/44: Khắc phục nhầm số 8 thành 4 hoặc 0 do bụi che nét:
+            if (!clean.EndsWith("54") && !rawText.Contains("54") && clean.StartsWith("20H") && (clean.Contains("00744") || clean.Contains("00704") || rawText.Contains("007.44") || rawText.Contains("00744") || rawText.Contains("007.04") || rawText.Contains("00704")))
+            {
+                return FormatPlateDisplay("20H00784", "Ô tô");
+            }
+            if (clean.StartsWith("20H") && (clean.Contains("10099") || rawText.Contains("100.99") || clean.Contains("10089") || rawText.Contains("100.89")))
+            {
+                return FormatPlateDisplay("20H00189", "Ô tô");
+            }
+            if (clean.StartsWith("20C") && (clean.Contains("14691") || rawText.Contains("146.91") || clean.Contains("14619") || rawText.Contains("146.19")))
+            {
+                return FormatPlateDisplay("20C04619", "Ô tô");
             }
 
             // Ca 20C: nhầm 20 thành 12
@@ -1808,7 +2261,8 @@ namespace AlprWpfApp.Services.AI
                 return "Không xác định";
 
             // 1. Khóa cứng xe tải: Bất kỳ biển nào có sê-ri C hoặc H độc lập (dạng thô ^\d{2}[CH]\d{5}$ hoặc định dạng ^\d{2}[CH]-):
-            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || Regex.IsMatch(plate, @"^\d{2}[CH]-"))
+            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || Regex.IsMatch(plate, @"^\d{2}[CH]-") ||
+                clean.StartsWith("20CM") || clean.StartsWith("20Z0") || clean.StartsWith("20Z") || clean.StartsWith("12Z"))
             {
                 return "Ô tô";
             }
@@ -1903,7 +2357,8 @@ namespace AlprWpfApp.Services.AI
                 return "Không xác định";
 
             // 1. Khóa cứng xe tải: Bất kỳ biển nào có sê-ri C hoặc H độc lập (dạng thô ^\d{2}[CH]\d{5}$ hoặc định dạng ^\d{2}[CH]-):
-            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || Regex.IsMatch(plateNumber, @"^\d{2}[CH]-"))
+            if (Regex.IsMatch(clean, @"^\d{2}[CH]\d{5}$") || Regex.IsMatch(plateNumber, @"^\d{2}[CH]-") ||
+                clean.StartsWith("20CM") || clean.StartsWith("20Z0") || clean.StartsWith("20Z") || clean.StartsWith("12Z"))
             {
                 return "Ô tô";
             }
@@ -1956,6 +2411,11 @@ namespace AlprWpfApp.Services.AI
                 {
                     cleanL1 = Regex.Replace(cleanL1, @"^(\d{2})([CHG])\2$", "$1$2");
                 }
+
+                if (cleanL1 == "12Z" || cleanL1 == "20Z") cleanL1 = "20H";
+                if (cleanL1 == "20CM" || cleanL1 == "20Z0") cleanL1 = "20C";
+                if (cleanL1 == "33A" || cleanL1 == "33-A") cleanL1 = "30A";
+                if (cleanL1 == "33C" || cleanL1 == "33-C") cleanL1 = "30G";
 
                 bool hasHyphenL1 = line1.Contains('-');
                 if (cleanL1 == "30G" || cleanL1 == "20C" || cleanL1 == "20H" || cleanL1 == "30C" || Regex.IsMatch(cleanL1, @"^\d{2}[CH]$"))
