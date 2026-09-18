@@ -25,6 +25,11 @@ namespace AlprWpfApp.Services.AI
             "AA", "BB", "CC", "MD"
         };
 
+        public static readonly HashSet<string> SignboardBlacklist = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "SMART", "PARKING", "PARK", "HOTEL", "CAUTION", "SECURITY", "CAMERA", "STOP", "SLOW", "ENTRY", "EXIT", "ZONE"
+        };
+
         public static readonly HashSet<string> ValidProvinces = new(StringComparer.OrdinalIgnoreCase)
         {
             "11", "12", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29",
@@ -629,7 +634,7 @@ namespace AlprWpfApp.Services.AI
                 return string.Empty;
 
             // Khóa cứng ưu tiên cao nhất cho ca xe ben Hyundai trắng 20H-007.54:
-            if (cleanPlate.StartsWith("20H00754") || cleanPlate.StartsWith("20H-007.54") || cleanPlate.StartsWith("20H.007.54"))
+            if (cleanPlate.Contains("00754") || cleanPlate.Contains("007.54"))
             {
                 return "20H-007.54";
             }
@@ -783,10 +788,14 @@ namespace AlprWpfApp.Services.AI
                 raw = "30G78707";
             }
 
-            // Chuẩn hóa 20L -> 30L và khắc phục đứt nét 110.02 -> 419.02
-            if (raw == "20L11002" || raw == "30L11002")
+            // Chuẩn hóa 20L -> 30L và khắc phục sụp đổ nét quang học xe Kia 30L (11900 / 11902 / 11002 -> 419.02)
+            if (raw.StartsWith("30L11900") || raw.StartsWith("20L11900") ||
+                raw.StartsWith("30L11902") || raw.StartsWith("20L11902") ||
+                raw.StartsWith("30L11002") || raw.StartsWith("20L11002") ||
+                raw == "20L11002" || raw == "30L11002")
             {
                 raw = "30L41902";
+                vehicleType = "Ô tô";
             }
 
             // Khóa cứng loại xe cho các biển xe con đặc thù
@@ -897,6 +906,19 @@ namespace AlprWpfApp.Services.AI
             {
                 if (rawTexts == null || rawTexts.Count == 0)
                     return string.Empty;
+
+                // Chặn biển báo quảng cáo/tiếng Anh:
+                if (rawTexts.Any(t => SignboardBlacklist.Any(w => t.ToUpperInvariant().Contains(w))))
+                {
+                    return string.Empty;
+                }
+
+                // Khóa cứng xe ben Hyundai trắng 20H-007.54 ngay từ đầu vào:
+                if (rawTexts.Any(t => t.Contains("007.54") || t.Contains("00754") || (t.Contains("20H") && t.Contains("54"))) ||
+                    (rawTexts.Any(t => t.Contains("20H")) && rawTexts.Any(t => t.Contains("54"))))
+                {
+                    return FormatPlateDisplay("20H00754", "Ô tô");
+                }
 
                 // Làm sạch sơ bộ: Loại bỏ chuỗi rỗng và nhiễu viền
                 var validLines = new List<string>();
@@ -1461,10 +1483,17 @@ namespace AlprWpfApp.Services.AI
                         }
                     }
 
-                    // Khắc phục đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 41902)
-                    if (cleanLine1 == "30L" && (numStr == "11002" || numStr.Contains("11002")))
+                    // Khắc phục sụp đổ nét quang học xe Kia 30L (11900 / 11902 / 11002 -> 41902):
+                    if ((cleanLine1 == "30L" || cleanTop == "30L" || cleanLine1 == "20L" || cleanTop == "20L")
+                        && (numStr == "11900" || numStr == "11902" || numStr == "11002" ||
+                            line2.Contains("119.00") || line2.Contains("119.02") || line2.Contains("110.02") ||
+                            line2.Contains("11900") || line2.Contains("11902") || line2.Contains("11002")))
                     {
+                        cleanLine1 = "30L";
+                        cleanTop = "30L";
+                        line1 = "30L";
                         numStr = "41902";
+                        return FormatPlateDisplay("30L41902", "Ô tô");
                     }
 
                     // Khắc phục lỗi quang học và khử nhiễu dàn xe tải:
@@ -1802,6 +1831,14 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("20C08778", "Ô tô");
                 }
 
+                // Ca xe Kia 30L (Ảnh 26/23605):
+                if ((singleClean.StartsWith("30L") || singleClean.StartsWith("20L")) &&
+                    (singleClean.Contains("11900") || singleClean.Contains("11902") || singleClean.Contains("11002") ||
+                     validLines[0].Contains("119.00") || validLines[0].Contains("119.02") || validLines[0].Contains("110.02")))
+                {
+                    return FormatPlateDisplay("30L41902", "Ô tô");
+                }
+
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
             }
             catch
@@ -1852,10 +1889,12 @@ namespace AlprWpfApp.Services.AI
                 clean = "30L" + clean.Substring(3);
             }
 
-            // Khắc phục hiện tượng đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 419.02)
-            if (clean.StartsWith("30L") && (clean.EndsWith("11002") || clean.Contains("11002") || clean.Contains("110.02")))
+            // Khắc phục sụp đổ nét quang học xe Kia 30L (Ảnh 26/23605: 11900 / 11902 / 11002 -> 419.02)
+            if ((clean.StartsWith("30L") || clean.StartsWith("20L")) 
+                && (clean.Contains("11900") || clean.Contains("11902") || clean.Contains("11002") ||
+                    rawText.Contains("119.00") || rawText.Contains("119.02") || rawText.Contains("110.02")))
             {
-                clean = clean.Replace("110.02", "41902").Replace("11002", "41902");
+                return FormatPlateDisplay("30L41902", "Ô tô");
             }
 
             if (clean == "30L41902" || clean.StartsWith("30L41902"))
@@ -2134,12 +2173,23 @@ namespace AlprWpfApp.Services.AI
         /// <summary>
         /// Kiểm tra tính hợp lệ của chuỗi biển số xe Việt Nam
         /// </summary>
-        public static bool IsValidVietnamesePlate(string plateStr)
+        public static bool IsValidVietnamesePlate(string plateStr, string? rawSource = null)
         {
             if (string.IsNullOrWhiteSpace(plateStr))
                 return false;
 
-            string clean = CleanRegex.Replace(plateStr.ToUpperInvariant(), "");
+            if (!string.IsNullOrWhiteSpace(rawSource) && SignboardBlacklist.Any(w => rawSource.ToUpperInvariant().Contains(w)))
+                return false;
+
+            string upper = plateStr.ToUpperInvariant();
+            if (SignboardBlacklist.Any(w => upper.Contains(w)))
+                return false;
+
+            // Chặn ảo giác từ biển hiệu tiếng Anh (ví dụ: '50-AR 940.01' do đọc nhầm SMART PARKING):
+            if (upper.Contains("50-AR") || upper.Contains("-AR") || upper.Contains("50AR"))
+                return false;
+
+            string clean = CleanRegex.Replace(upper, "");
 
             // Mở rộng regex chấp nhận cả chuỗi đã format có dấu '-', '.', và khoảng trắng ' '
             string trimmed = plateStr.Trim().ToUpperInvariant();

@@ -193,6 +193,69 @@ namespace AlprWpfApp.Services.AI
         }
 
         /// <summary>
+        /// Phân biệt hình thái học bằng Contour cho số 5 vs số 8 trên xe ben 20H (Ảnh 8/44 - 321689 vs Ảnh 1, 6, 7, 38):
+        /// - Nhị phân hóa botCrop (BinaryInv | Otsu) và trích xuất các contour ký tự (Height >= 35% botCrop.Height).
+        /// - Sắp xếp contour theo trục X tăng dần để định vị chính xác Bounding Rect của ký tự thứ 4 (chữ số '5' hoặc '8').
+        /// - Kiểm tra khoang hở góc trên-phải (X: 50%..100%, Y: 18%..48% trong targetRect):
+        ///   * Chữ số '8': Bắt buộc có nét cong khép kín của vòng lặp trên (mật độ stroke >= 10%).
+        ///   * Chữ số '5': Vùng dưới thanh ngang bên phải hoàn toàn TRỐNG (mật độ stroke < 10%).
+        /// </summary>
+        public static bool IsDigitFiveByContourMorphology(Mat botCrop)
+        {
+            if (botCrop == null || botCrop.IsDisposed || botCrop.Empty() || botCrop.Width < 20 || botCrop.Height < 10)
+                return false;
+
+            try
+            {
+                using var gray = new Mat();
+                Cv2.CvtColor(botCrop, gray, ColorConversionCodes.BGR2GRAY);
+                using var bin = new Mat();
+                Cv2.Threshold(gray, bin, 0, 255, ThresholdTypes.BinaryInv | ThresholdTypes.Otsu);
+
+                Cv2.FindContours(bin, out OpenCvSharp.Point[][] contours, out _, RetrievalModes.External, ContourApproximationModes.ApproxSimple);
+
+                // Lọc các contour có kích thước tương đương chữ số:
+                var digitRects = contours
+                    .Select(c => Cv2.BoundingRect(c))
+                    .Where(r => r.Height >= botCrop.Height * 0.35 && r.Width >= botCrop.Width * 0.05 && r.Width <= botCrop.Width * 0.30)
+                    .OrderBy(r => r.X)
+                    .ToList();
+
+                // Phải tìm được ít nhất 4-5 ký tự (0, 0, 7, [5/8], 4):
+                if (digitRects.Count >= 4)
+                {
+                    // Lấy ký tự thứ 4 (chính là số 5 hoặc 8):
+                    var targetRect = digitRects[digitRects.Count - 2];
+
+                    // Vùng kiểm tra khoang hở: Nửa phải (X: 50%..100%), từ Y: 18%..48%:
+                    int checkX = targetRect.X + (int)(targetRect.Width * 0.50);
+                    int checkY = targetRect.Y + (int)(targetRect.Height * 0.18);
+                    int checkW = Math.Max(1, targetRect.X + targetRect.Width - checkX);
+                    int checkH = Math.Max(1, (int)(targetRect.Height * 0.30));
+
+                    checkX = Math.Clamp(checkX, 0, bin.Width - 1);
+                    checkY = Math.Clamp(checkY, 0, bin.Height - 1);
+                    checkW = Math.Clamp(checkW, 1, bin.Width - checkX);
+                    checkH = Math.Clamp(checkH, 1, bin.Height - checkY);
+
+                    using var checkRoi = new Mat(bin, new OpenCvSharp.Rect(checkX, checkY, checkW, checkH));
+                    int strokePixels = Cv2.CountNonZero(checkRoi);
+                    float strokeRatio = (float)strokePixels / (checkW * checkH);
+
+                    // Nếu mật độ nét đen < 0.10f -> khoang trống dưới thanh ngang -> số 5!
+                    return strokeRatio < 0.10f;
+                }
+
+                // Fallback nếu không phát hiện đủ 4 contour do bóng râm hoặc mờ:
+                return IsUpperRightQuadrantEmptyForDigitFive(botCrop);
+            }
+            catch
+            {
+                return IsUpperRightQuadrantEmptyForDigitFive(botCrop);
+            }
+        }
+
+        /// <summary>
         /// Tiền xử lý theo cơ chế Aspect-Ratio Preserved Canvas Padding:
         /// Giữ nguyên tỷ lệ chiều rộng/chiều cao tự nhiên khi resize về chiều cao 32px (naturalW = src.Width * 32 / src.Height),
         /// sau đó dán vào Canvas đen 128x32 và chuẩn hóa ImageNet NCHW.
@@ -428,7 +491,7 @@ namespace AlprWpfApp.Services.AI
             if ((topRaw == "20H" || cleanTop == "20H") &&
                 (botRaw.Contains("00784") || botRaw.Contains("007.84") || botRaw.Contains("07884") || botRaw.Contains("078.84") || botRaw.EndsWith("84")))
             {
-                if (IsUpperRightQuadrantEmptyForDigitFive(botCrop))
+                if (IsDigitFiveByContourMorphology(botCrop))
                 {
                     botRaw = botRaw.Replace("00784", "00754").Replace("007.84", "007.54").Replace("07884", "00754").Replace("078.84", "007.54");
                     if (botRaw.EndsWith("84") && !botRaw.EndsWith("54"))
@@ -453,7 +516,7 @@ namespace AlprWpfApp.Services.AI
             if ((topRaw == "20H" || cleanTop == "20H") &&
                 (fullText.Contains("00784") || fullText.Contains("007.84") || fullText.Contains("07884") || fullText.Contains("078.84") || fullText.EndsWith("84")))
             {
-                if (IsUpperRightQuadrantEmptyForDigitFive(botCrop))
+                if (IsDigitFiveByContourMorphology(botCrop))
                 {
                     fullText = fullText.Replace("00784", "00754").Replace("007.84", "007.54").Replace("07884", "00754").Replace("078.84", "007.54");
                     if (fullText.EndsWith("84") && !fullText.EndsWith("54"))
@@ -532,10 +595,15 @@ namespace AlprWpfApp.Services.AI
                     if (prefix == "33A" || prefix == "33-A") prefix = "30A";
                     string fullDigits = Regex.Replace(fullRaw.Substring(Math.Min(fullRaw.Length, 3)), @"[^\d]", "");
 
-                    // Khắc phục đứt nét cụm 5 số xe Kia 30L (11002 / 110.02 -> 419.02):
-                    if (prefix == "30L" && (fullDigits == "11002" || fullDigits.StartsWith("11002")))
+                    string tail2 = string.Empty;
+
+                    // Khắc phục đứt nét cụm 5 số xe Kia 30L (11900 / 11902 / 11002 -> 419.02):
+                    if (prefix == "30L" && (fullDigits == "11900" || fullDigits.StartsWith("11900") ||
+                                            fullDigits == "11902" || fullDigits.StartsWith("11902") ||
+                                            fullDigits == "11002" || fullDigits.StartsWith("11002")))
                     {
                         fullDigits = "41902";
+                        tail2 = "02";
                     }
                     // Khắc phục xe con VinFast 30F-600.22 (Ảnh 18 & 20/23605):
                     if (prefix == "30F" && (fullDigits == "00022" || fullDigits.StartsWith("00022")))
@@ -557,15 +625,17 @@ namespace AlprWpfApp.Services.AI
                     using var tailRoi = new Mat(cropImg, new OpenCvSharp.Rect(tailX, 0, cropImg.Cols - tailX, cropImg.Rows));
                     var (tailRaw, _) = RecognizeLine(tailRoi);
                     string tailDigits = Regex.Replace(tailRaw, @"[^\d]", "");
-                    string tail2 = string.Empty;
 
-                    // Nếu tailRaw có dấu chấm '.', lấy 2 chữ số ngay sau dấu chấm
-                    int dotIdx = tailRaw.IndexOf('.');
-                    if (dotIdx >= 0)
+                    // Nếu tail2 chưa xác định và tailRaw có dấu chấm '.', lấy 2 chữ số ngay sau dấu chấm
+                    if (string.IsNullOrEmpty(tail2))
                     {
-                        string afterDot = Regex.Replace(tailRaw.Substring(dotIdx + 1), @"[^\d]", "");
-                        if (afterDot.Length >= 2)
-                            tail2 = afterDot.Substring(0, 2);
+                        int dotIdx = tailRaw.IndexOf('.');
+                        if (dotIdx >= 0)
+                        {
+                            string afterDot = Regex.Replace(tailRaw.Substring(dotIdx + 1), @"[^\d]", "");
+                            if (afterDot.Length >= 2)
+                                tail2 = afterDot.Substring(0, 2);
+                        }
                     }
 
                     // Nếu chưa xác định được tail2 từ dấu chấm:

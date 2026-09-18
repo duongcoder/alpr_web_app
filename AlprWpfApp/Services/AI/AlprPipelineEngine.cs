@@ -23,6 +23,7 @@ namespace AlprWpfApp.Services.AI
         private bool _isDisposed;
 
         public Rect2f ScaleRoi { get; set; } = new Rect2f(0.22f, 0.10f, 0.56f, 0.88f);
+        public static readonly HashSet<string> SignboardBlacklist = PlatePostProcessor.SignboardBlacklist;
 
         public bool IsReady => _yoloDetector.IsLoaded && _parseqRecognizer.IsLoaded;
 
@@ -265,6 +266,13 @@ namespace AlprWpfApp.Services.AI
 
                 using var safeCrop = new Mat(inputFrame, new OpenCvSharp.Rect(x, y, w, h));
                 var (rawLines, ocrConf) = _parseqRecognizer.RecognizePlateLines(safeCrop);
+
+                // Kiểm tra loại bỏ biển quảng cáo/biển hiệu không phải biển số xe:
+                if (rawLines.Any(l => PlatePostProcessor.SignboardBlacklist.Any(w => l.ToUpperInvariant().Contains(w))))
+                {
+                    continue; // Bỏ qua box biển hiệu "SMART PARKING", nhường quyền cho biển số xe thật
+                }
+
                 string cleanPlate = PlatePostProcessor.ProcessRawTextsToCleanPlate(rawLines);
                 bool isValidPlate = PlatePostProcessor.IsValidVietnamesePlate(cleanPlate);
 
@@ -287,6 +295,10 @@ namespace AlprWpfApp.Services.AI
 
                     // Chạy lại OCR trên ảnh tăng cường:
                     var (retryLines, retryConf) = _parseqRecognizer.RecognizePlateLines(bgrEnhanced);
+                    if (retryLines.Any(l => PlatePostProcessor.SignboardBlacklist.Any(w => l.ToUpperInvariant().Contains(w))))
+                    {
+                        continue;
+                    }
                     string retryClean = PlatePostProcessor.ProcessRawTextsToCleanPlate(retryLines);
                     bool retryValid = PlatePostProcessor.IsValidVietnamesePlate(retryClean);
 
