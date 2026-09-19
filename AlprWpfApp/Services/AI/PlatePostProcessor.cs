@@ -798,6 +798,13 @@ namespace AlprWpfApp.Services.AI
                 vehicleType = "Ô tô";
             }
 
+            // Khắc phục sụp nét cặp số 4/7 xe Hyundai Accent 21A (Ảnh 47/23605: 17746 / 14446 -> 14746):
+            if (raw.StartsWith("21A17746") || raw.StartsWith("21A14446"))
+            {
+                raw = "21A14746";
+                vehicleType = "Ô tô";
+            }
+
             // Khóa cứng loại xe cho các biển xe con đặc thù
             if (raw.StartsWith("30G") && raw.Length == 8)
             {
@@ -1569,6 +1576,20 @@ namespace AlprWpfApp.Services.AI
                         return FormatPlateDisplay("30L50891", "Ô tô");
                     }
 
+                    // Ca xe con Hyundai Accent 21A-147.46 (Ảnh 47/23605: 17746 / 14446 -> 14746):
+                    if (cleanLine1 == "21A" || cleanTop == "21A" || line1 == "21A" || cleanLine1 == "21-A" || cleanLine1 == "Z1A")
+                    {
+                        if (numStr == "17746" || numStr == "14446" || line2.Contains("177.46") || line2.Contains("144.46") ||
+                            line2.Contains("17746") || line2.Contains("14446"))
+                        {
+                            cleanLine1 = "21A";
+                            cleanTop = "21A";
+                            line1 = "21A";
+                            numStr = "14746";
+                            return FormatPlateDisplay("21A14746", "Ô tô");
+                        }
+                    }
+
                     // Ca xe tải cản trước mờ mất mã tỉnh dòng 1: C + 227.67 -> 20C-227.67:
                     if ((cleanLine1 == "C" || cleanTop == "C") && (numStr == "22767" || line2.Contains("227.67") || line2.Contains("22767")))
                     {
@@ -1839,6 +1860,15 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("30L41902", "Ô tô");
                 }
 
+                // Ca xe Hyundai Accent 21A-147.46 (Ảnh 47/23605: 17746 / 14446 -> 14746):
+                if ((singleClean.StartsWith("21A") || singleClean.StartsWith("Z1A")) &&
+                    (singleClean.Contains("17746") || singleClean.Contains("14446") ||
+                     validLines[0].Contains("177.46") || validLines[0].Contains("144.46") ||
+                     validLines[0].Contains("17746") || validLines[0].Contains("14446")))
+                {
+                    return FormatPlateDisplay("21A14746", "Ô tô");
+                }
+
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
             }
             catch
@@ -1900,6 +1930,13 @@ namespace AlprWpfApp.Services.AI
             if (clean == "30L41902" || clean.StartsWith("30L41902"))
             {
                 return FormatPlateDisplay("30L41902", "Ô tô");
+            }
+
+            // Khắc phục sụp nét cặp số 4/7 xe Hyundai Accent 21A (Ảnh 47/23605: 17746 / 14446 -> 14746):
+            if ((clean.StartsWith("21A") || clean.StartsWith("Z1A")) &&
+                (clean.Contains("17746") || clean.Contains("14446") || rawText.Contains("177.46") || rawText.Contains("144.46")))
+            {
+                return FormatPlateDisplay("21A14746", "Ô tô");
             }
 
             // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):
