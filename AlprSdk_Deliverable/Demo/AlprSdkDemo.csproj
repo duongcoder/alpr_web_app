@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <!-- Tham chiếu trực tiếp DLL từ thư mục Bin -->
+  <ItemGroup>
+    <Reference Include="AlprSdk">
+      <HintPath>..\Bin\AlprSdk.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenCvSharp">
+      <HintPath>..\Bin\OpenCvSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.ML.OnnxRuntime">
+      <HintPath>..\Bin\Microsoft.ML.OnnxRuntime.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Drawing.Common">
+      <HintPath>..\Bin\System.Drawing.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Private.Windows.Core">
+      <HintPath>..\Bin\System.Private.Windows.Core.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Tự động nạp native runtimes C++ khi biên dịch Demo -->
+  <ItemGroup>
+    <None Include="..\Bin\runtimes\**\*.*">
+      <Link>runtimes\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Samples\**\*.*">
+      <Link>Samples\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\Models\**\*.*">
+      <Link>Models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

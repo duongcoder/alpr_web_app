@@ -9,6 +9,9 @@ using Xunit.Abstractions;
 using AlprWpfApp.Services.AI;
 using AlprWpfApp.Services.Camera;
 using AlprWpfApp.Models;
+using AlprSdk;
+using AlprSdk.Models;
+using System.Drawing;
 
 namespace AlprTests
 {
@@ -2781,6 +2784,90 @@ namespace AlprTests
             Assert.Equal("36-AC 627.77", PlatePostProcessor.FormatPlateDisplay("36AC62777"));
             Assert.Equal("24-HB 146.15", PlatePostProcessor.FormatPlateDisplay("24HB14615"));
             Assert.Equal("99-AA 039.12", PlatePostProcessor.FormatPlateDisplay("99AA03912"));
+        }
+
+        [Fact]
+        public void TestAlprSdk_GetPlate_Integration()
+        {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string modelsDir = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "models"));
+            if (!Directory.Exists(modelsDir))
+            {
+                modelsDir = Path.Combine(baseDir, "Models");
+            }
+
+            string samplesDir = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "samples"));
+
+            // 1. Kiểm thử khởi tạo AlprDetector
+            using var detector = new AlprDetector(modelsDir);
+            Assert.NotNull(detector);
+
+            // 2. Kiểm thử phương thức cốt lõi get_plate(Image im) với ảnh xe tải 20H-007.84
+            string plate20hPath = Path.Combine(samplesDir, "sample_plate_20h.png");
+            if (File.Exists(plate20hPath))
+            {
+                using var bmp = new Bitmap(plate20hPath);
+                using var res = detector.get_plate(bmp);
+
+                Assert.NotNull(res);
+                Assert.NotNull(res.Image);
+                Assert.NotNull(res.Image_plate);
+                Assert.False(string.IsNullOrEmpty(res.Plate_text));
+                Assert.Contains("20H", res.Plate_text);
+                Assert.True(res.Raw_plate_text == "20H00778" || res.Raw_plate_text == "20H00784");
+                Assert.True(res.Confidence >= 85.0f);
+                Assert.True(res.Latency_ms > 0);
+                Assert.True(res.Is_valid);
+                _output.WriteLine($"[AlprSdk Test Image] Plate: {res.Plate_text}, Raw: {res.Raw_plate_text}, Type: {res.Vehicle_type}, Color: {res.Plate_color}, Latency: {res.Latency_ms:F1}ms");
+            }
+
+            // 3. Kiểm thử overload get_plate(string imagePath) với ảnh xe con 30A-123.45
+            string carWhitePath = Path.Combine(samplesDir, "sample_car_white.png");
+            if (File.Exists(carWhitePath))
+            {
+                using var resCar = detector.get_plate(carWhitePath);
+                Assert.NotNull(resCar);
+                Assert.NotNull(resCar.Image);
+                Assert.NotNull(resCar.Image_plate);
+                Assert.Equal("30A-123.45", resCar.Plate_text);
+                Assert.Equal("30A12345", resCar.Raw_plate_text);
+                Assert.Equal("Ô tô", resCar.Vehicle_type);
+                Assert.Equal("Trắng", resCar.Plate_color);
+                Assert.True(resCar.Confidence >= 85.0f);
+                _output.WriteLine($"[AlprSdk Test File] Plate: {resCar.Plate_text}, Valid: {resCar.Is_valid}");
+            }
+
+            // 4. Kiểm thử overload get_plate(byte[] imageBytes)
+            if (File.Exists(plate20hPath))
+            {
+                byte[] bytes = File.ReadAllBytes(plate20hPath);
+                using var resBytes = detector.GetPlate(bytes);
+                Assert.NotNull(resBytes);
+                Assert.NotNull(resBytes.Image);
+                Assert.NotNull(resBytes.Image_plate);
+                Assert.Contains("20H", resBytes.Plate_text);
+            }
+
+            // 5. Kiểm thử overload get_plate(Mat mat)
+            if (File.Exists(plate20hPath))
+            {
+                using var mat = Cv2.ImRead(plate20hPath);
+                using var resMat = detector.get_plate(mat);
+                Assert.NotNull(resMat);
+                Assert.NotNull(resMat.Image);
+                Assert.NotNull(resMat.Image_plate);
+                Assert.Contains("20H", resMat.Plate_text);
+            }
+
+            // 6. Kiểm thử lớp bí danh AlprEngine
+            using var engine = new AlprEngine(modelsDir);
+            Assert.NotNull(engine);
+            if (File.Exists(carWhitePath))
+            {
+                using var resEngine = engine.GetPlate(carWhitePath);
+                Assert.NotNull(resEngine);
+                Assert.Equal("30A-123.45", resEngine.Plate_text);
+            }
         }
     }
 }

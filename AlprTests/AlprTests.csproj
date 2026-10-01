@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\AlprSdk\AlprSdk.csproj" />
     <ProjectReference Include="..\AlprWpfApp\AlprWpfApp.csproj" />
   </ItemGroup>
 
