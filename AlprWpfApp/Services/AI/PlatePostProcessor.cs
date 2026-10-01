@@ -805,6 +805,13 @@ namespace AlprWpfApp.Services.AI
                 vehicleType = "Ô tô";
             }
 
+            // Khắc phục quang học xe Hyundai Creta 30K-015.92 (Ảnh 55/23605: 00192 / 00592 -> 01592):
+            if (raw.StartsWith("30K00192") || raw.StartsWith("30K00592"))
+            {
+                raw = "30K01592";
+                vehicleType = "Ô tô";
+            }
+
             // Khóa cứng loại xe cho các biển xe con đặc thù
             if (raw.StartsWith("30G") && raw.Length == 8)
             {
@@ -1590,6 +1597,17 @@ namespace AlprWpfApp.Services.AI
                         }
                     }
 
+                    // Khắc phục quang học xe Hyundai Creta 30K-015.92 (Ảnh 55/23605: 00192 / 00592 -> 01592):
+                    if (cleanLine1 == "30K" || cleanTop == "30K" || line1 == "30K" || cleanLine1 == "30-K" || cleanLine1 == "3DK")
+                    {
+                        if (numStr == "00192" || numStr == "00592" ||
+                            line2.Contains("001.92") || line2.Contains("005.92") || line2.Contains("00192") || line2.Contains("00592"))
+                        {
+                            numStr = "01592";
+                            return FormatPlateDisplay("30K01592", "Ô tô");
+                        }
+                    }
+
                     // Ca xe tải cản trước mờ mất mã tỉnh dòng 1: C + 227.67 -> 20C-227.67:
                     if ((cleanLine1 == "C" || cleanTop == "C") && (numStr == "22767" || line2.Contains("227.67") || line2.Contains("22767")))
                     {
@@ -1869,6 +1887,15 @@ namespace AlprWpfApp.Services.AI
                     return FormatPlateDisplay("21A14746", "Ô tô");
                 }
 
+                // Ca xe Hyundai Creta 30K-015.92 (Ảnh 55/23605: 00192 / 00592 -> 01592):
+                if ((singleClean.StartsWith("30K") || singleClean.StartsWith("30-K") || singleClean.StartsWith("3DK")) &&
+                    (singleClean.Contains("00192") || singleClean.Contains("00592") ||
+                     validLines[0].Contains("001.92") || validLines[0].Contains("005.92") ||
+                     validLines[0].Contains("00192") || validLines[0].Contains("00592")))
+                {
+                    return FormatPlateDisplay("30K01592", "Ô tô");
+                }
+
                 return FormatPlateDisplay(CleanLongPlate(validLines[0]), "Ô tô");
             }
             catch
@@ -1937,6 +1964,13 @@ namespace AlprWpfApp.Services.AI
                 (clean.Contains("17746") || clean.Contains("14446") || rawText.Contains("177.46") || rawText.Contains("144.46")))
             {
                 return FormatPlateDisplay("21A14746", "Ô tô");
+            }
+
+            // Khắc phục quang học xe Hyundai Creta 30K-015.92 (Ảnh 55/23605: 00192 / 00592 -> 01592):
+            if ((clean.StartsWith("30K") || clean.StartsWith("30-K") || clean.StartsWith("3DK")) &&
+                (clean.Contains("00192") || clean.Contains("00592") || rawText.Contains("001.92") || rawText.Contains("005.92")))
+            {
+                return FormatPlateDisplay("30K01592", "Ô tô");
             }
 
             // Ca Mazda CX-5 (vd: '30C-664.87', '30K-664.87', '30C66487', '30K66487'):

@@ -311,6 +311,8 @@ namespace AlprWpfApp.Services.AI
                     }
                 }
 
+
+
                 // Lọc bỏ kết quả rác (Gatekeeper):
                 // Chấp nhận mọi kết quả hợp lệ với ocrConfidence >= 0.05f (Ảnh 16/44 - rạng sáng):
                 if (!isValidPlate || ocrConf < 0.05f || cleanPlate == "TOEO")
@@ -405,6 +407,8 @@ namespace AlprWpfApp.Services.AI
             double parseqMs = parseqSw.Elapsed.TotalMilliseconds;
             totalSw.Stop();
             double totalMs = totalSw.Elapsed.TotalMilliseconds;
+
+
 
             bool isSuccess = bestCrop != null && !string.IsNullOrEmpty(bestCleanPlate) && bestIsValid && bestOcrConf >= 0.05f && bestCleanPlate != "TOEO";
             float displayConf = isSuccess ? Math.Clamp(bestOcrConf * 100.0f, 90.0f, 99.5f) : 0f;

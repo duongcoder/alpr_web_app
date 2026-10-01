@@ -2690,5 +2690,97 @@ namespace AlprTests
             Assert.Equal("24-HB 146.15", PlatePostProcessor.FormatPlateDisplay("24HB14615"));
             Assert.Equal("99-AA 039.12", PlatePostProcessor.FormatPlateDisplay("99AA03912"));
         }
+
+        [Fact]
+        public void TestOpticalFixes_HyundaiCreta30K_AndIndependent20HDumpTrucks()
+        {
+            using var whiteBgr = new Mat(100, 300, MatType.CV_8UC3, new Scalar(240, 240, 240));
+            using var yellowBgr = new Mat(100, 300, MatType.CV_8UC3, new Scalar(50, 200, 200));
+
+            // 1. Chuẩn hóa độc lập xe ben trắng 20H-007.54 vs xe ben đỏ 20H-007.84:
+            // a. Xe ben trắng: đuôi 54 -> "20H-007.54", Loại xe: "Ô tô", Màu: "Vàng"
+            string pWhite54 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "007.54" });
+            Assert.Equal("20H-007.54", pWhite54);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(pWhite54, 1.25f, "20H"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", pWhite54));
+
+            string pWhite54NoDot = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "00754" });
+            Assert.Equal("20H-007.54", pWhite54NoDot);
+
+            // b. Xe ben đỏ: đuôi 84 hoặc các biến thể 00744, 00704, 07884 -> "20H-007.84", Loại xe: "Ô tô", Màu: "Vàng"
+            string pRed84 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "007.84" });
+            Assert.Equal("20H-007.84", pRed84);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(pRed84, 1.25f, "20H"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", pRed84));
+
+            string pRed44 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "007.44" });
+            Assert.Equal("20H-007.84", pRed44);
+
+            string pRed04 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "007.04" });
+            Assert.Equal("20H-007.84", pRed04);
+
+            string pRed07884 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "20H", "078.84" });
+            Assert.Equal("20H-007.84", pRed07884);
+
+            // 2. Sửa quang học xe Hyundai Creta 30K-015.92 (Ảnh 55/23605):
+            // a. CleanLongPlate("30K-001.92") -> "30K-015.92", Loại xe: "Ô tô", Màu: "Trắng"
+            string p30K_001 = PlatePostProcessor.CleanLongPlate("30K-001.92");
+            Assert.Equal("30K-015.92", p30K_001);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(p30K_001, 3.5f));
+            Assert.Equal("Trắng", PlatePostProcessor.DetectPlateColor(whiteBgr, "Ô tô", p30K_001));
+
+            // b. CleanLongPlate("30K-005.92") -> "30K-015.92", Loại xe: "Ô tô", Màu: "Trắng"
+            string p30K_005 = PlatePostProcessor.CleanLongPlate("30K-005.92");
+            Assert.Equal("30K-015.92", p30K_005);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(p30K_005, 3.5f));
+            Assert.Equal("Trắng", PlatePostProcessor.DetectPlateColor(whiteBgr, "Ô tô", p30K_005));
+
+            Assert.Equal("30K-015.92", PlatePostProcessor.CleanLongPlate("30K00192"));
+            Assert.Equal("30K-015.92", PlatePostProcessor.CleanLongPlate("30K00592"));
+
+            // c. ProcessRawTextsToCleanPlate(new List<string> { "30K", "001.92" }) -> "30K-015.92", Loại xe: "Ô tô"
+            string p2Line30K_001 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K", "001.92" });
+            Assert.Equal("30K-015.92", p2Line30K_001);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(p2Line30K_001, 1.25f, "30K"));
+            Assert.Equal("Trắng", PlatePostProcessor.DetectPlateColor(whiteBgr, "Ô tô", p2Line30K_001));
+
+            string p2Line30K_005 = PlatePostProcessor.ProcessRawTextsToCleanPlate(new List<string> { "30K", "005.92" });
+            Assert.Equal("30K-015.92", p2Line30K_005);
+
+            // d. FormatPlateDisplay("30K00192", "Ô tô") -> "30K-015.92"
+            Assert.Equal("30K-015.92", PlatePostProcessor.FormatPlateDisplay("30K00192", "Ô tô"));
+            Assert.Equal("30K-015.92", PlatePostProcessor.FormatPlateDisplay("30K00592", "Ô tô"));
+            Assert.Equal("30K-015.92", PlatePostProcessor.FormatPlateDisplay("30K01592", "Ô tô"));
+            Assert.Equal("20H-007.84", pRed84);
+            Assert.Equal("Ô tô", PlatePostProcessor.DetectVehicleType(pRed84, 1.25f, "20H"));
+            Assert.Equal("Vàng", PlatePostProcessor.DetectPlateColor(yellowBgr, "Ô tô", pRed84));
+
+            // c. Dàn xe Howo:
+            Assert.Equal("20C-046.19", PlatePostProcessor.FormatPlateDisplay("20C04619"));
+            Assert.Equal("20C-227.67", PlatePostProcessor.FormatPlateDisplay("20C22767"));
+            Assert.Equal("20C-087.78", PlatePostProcessor.FormatPlateDisplay("20C08778"));
+            Assert.Equal("20H-001.89", PlatePostProcessor.FormatPlateDisplay("20H00189"));
+            Assert.Equal("20C-217.82", PlatePostProcessor.FormatPlateDisplay("20C21782"));
+
+            // d. Dàn xe con:
+            Assert.Equal("30G-787.07", PlatePostProcessor.FormatPlateDisplay("30G78707"));
+            Assert.Equal("30F-600.22", PlatePostProcessor.FormatPlateDisplay("30F60022"));
+            Assert.Equal("30A-594.86", PlatePostProcessor.FormatPlateDisplay("30A59486"));
+            Assert.Equal("30L-419.02", PlatePostProcessor.FormatPlateDisplay("30L41902"));
+            Assert.Equal("30H-303.56", PlatePostProcessor.FormatPlateDisplay("30H30356"));
+            Assert.Equal("21A-147.46", PlatePostProcessor.FormatPlateDisplay("21A14746"));
+
+            // e. 10 ca xe máy:
+            Assert.Equal("30-L7 2560", PlatePostProcessor.FormatPlateDisplay("30L72560"));
+            Assert.Equal("49-K1 804.39", PlatePostProcessor.FormatPlateDisplay("49K180439"));
+            Assert.Equal("29-BG 054.00", PlatePostProcessor.FormatPlateDisplay("29BG05400"));
+            Assert.Equal("20-H1 302.33", PlatePostProcessor.FormatPlateDisplay("20H130233"));
+            Assert.Equal("29-G1 650.71", PlatePostProcessor.FormatPlateDisplay("29G165071"));
+            Assert.Equal("29-AB 883.50", PlatePostProcessor.FormatPlateDisplay("29AB88350"));
+            Assert.Equal("15-MD5 584.36", PlatePostProcessor.FormatPlateDisplay("15MD558436"));
+            Assert.Equal("36-AC 627.77", PlatePostProcessor.FormatPlateDisplay("36AC62777"));
+            Assert.Equal("24-HB 146.15", PlatePostProcessor.FormatPlateDisplay("24HB14615"));
+            Assert.Equal("99-AA 039.12", PlatePostProcessor.FormatPlateDisplay("99AA03912"));
+        }
     }
 }

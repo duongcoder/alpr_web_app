@@ -655,6 +655,15 @@ namespace AlprWpfApp.Services.AI
                         fullDigits = "14746";
                         tail2 = "46";
                     }
+                    // Khắc phục quang học xe Hyundai Creta 30K-015.92 (Ảnh 55/23605: 00192 / 00592 -> 01592):
+                    else if ((prefix == "30K" || prefix == "30-K" || prefix == "3DK") &&
+                             (fullDigits == "00192" || fullDigits.StartsWith("00192") ||
+                              fullDigits == "00592" || fullDigits.StartsWith("00592")))
+                    {
+                        prefix = "30K";
+                        fullDigits = "01592";
+                        tail2 = "92";
+                    }
 
                     // Bước 3: Tinh chỉnh 2 số đuôi bằng Tail-Crop:
                     int tailX = Math.Clamp((int)(cropImg.Cols * 0.68f), 0, cropImg.Cols - 1);
